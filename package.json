@@ -1,0 +1,28 @@
+{
+  "name": "horeca-pos",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "predev": "node scripts/gen-version.mjs",
+    "dev": "next dev",
+    "prebuild": "node scripts/gen-version.mjs",
+    "build": "next build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "dexie": "^4.0.8",
+    "dexie-react-hooks": "^1.1.7",
+    "jsbarcode": "^3.11.6",
+    "next": "14.2.15",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/jsbarcode": "^3.11.4",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.5.0"
+  }
+}
