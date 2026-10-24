@@ -5,9 +5,11 @@ import { db } from '@/lib/db';
 import { ago } from '@/lib/util';
 import { BUILD_SHA, WEB_VERSION, checkForUpdate, getShellVersion, type UpdateResult } from '@/lib/version';
 import { useSync } from './SyncProvider';
+import { useDesktopUpdate } from './UpdateProvider';
 
 export default function SyncPopover() {
   const { status, lastSync, error, sync, deadline, now, online } = useSync();
+  const desk = useDesktopUpdate();
   const [open, setOpen] = useState(false);
   const [shell, setShell] = useState<string | null>(null);
   const [upd, setUpd] = useState<UpdateResult | null>(null);
@@ -49,6 +51,7 @@ export default function SyncPopover() {
       <button className="pill" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="dialog">
         <span className={'dot ' + (!online || status === 'offline' ? 'off' : status === 'error' ? 'err' : '')} />
         <span>{pill}</span>
+        {desk.supported && desk.status === 'available' && <b>Update</b>}
       </button>
 
       {open && (
@@ -76,6 +79,24 @@ export default function SyncPopover() {
             <dt>Web version</dt>
             <dd className="num">v{WEB_VERSION} ({BUILD_SHA})</dd>
           </dl>
+          {desk.supported ? (
+            <div style={{ display: 'grid', gap: 6 }}>
+              {desk.status === 'available' || desk.status === 'preparing' || desk.status === 'downloading' || desk.status === 'installing' ? (
+                <>
+                  <div><b>Version {desk.version} is available.</b></div>
+                  {desk.notes && <div className="mute">{desk.notes.slice(0, 200)}</div>}
+                  {desk.status === 'available' && <button className="btn primary" onClick={desk.install}>Install and restart</button>}
+                  {desk.status === 'preparing' && <div className="mute">Uploading waiting changes first…</div>}
+                  {desk.status === 'downloading' && <div className="mute num">Downloading… {desk.progress ?? 0}%</div>}
+                  {desk.status === 'installing' && <div className="mute">Installing. The app will restart.</div>}
+                </>
+              ) : (
+                <button className="linkbtn" onClick={desk.check} disabled={desk.status === 'checking'}>{desk.status === 'checking' ? 'Checking…' : 'Check for updates'}</button>
+              )}
+              {desk.status === 'latest' && <div className="mute">You are on the latest version.</div>}
+              {desk.error && <div className="err">{desk.error}</div>}
+            </div>
+          ) : (
           <div style={{ display: 'grid', gap: 6 }}>
             <button className="linkbtn" onClick={check} disabled={checking}>{checking ? 'Checking…' : 'Check for updates'}</button>
             {upd?.state === 'latest' && <div className="mute">You are on the latest version.</div>}
@@ -85,6 +106,7 @@ export default function SyncPopover() {
               <div>A newer version is available: {upd.latest}. <button className="linkbtn" onClick={() => location.reload()}>Reload</button></div>
             )}
           </div>
+          )}
         </div>
       )}
     </div>

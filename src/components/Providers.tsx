@@ -3,6 +3,7 @@ import AuthGate from './AuthGate';
 import SettingsProvider from './SettingsProvider';
 import ProfileProvider from './ProfileProvider';
 import SyncProvider from './SyncProvider';
+import UpdateProvider from './UpdateProvider';
 import Shell from './Shell';
 
 export default function Providers({ children }: { children: React.ReactNode }) {
@@ -11,7 +12,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       <AuthGate>
         <ProfileProvider>
           <SyncProvider>
-            <Shell>{children}</Shell>
+            <UpdateProvider>
+              <Shell>{children}</Shell>
+            </UpdateProvider>
           </SyncProvider>
         </ProfileProvider>
       </AuthGate>
