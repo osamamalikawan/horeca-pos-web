@@ -12,8 +12,8 @@ export interface Receipt {
 export default function ReceiptView({ r, store, paperMm }: { r: Receipt; store: Settings['store']; paperMm: number }) {
   return (
     <div className="receipt" style={{ width: `${Math.max(paperMm - 6, 40)}mm` }}>
-      {r.cancelled && <div className="rc-band" style={{ fontWeight: 700, letterSpacing: 2, marginBottom: 4 }}>CANCELLED</div>}
-      <div className="rc-band">
+      {r.cancelled && <div className="rc-cancel">CANCELLED</div>}
+      <div className="rc-shop">
         <div style={{ fontWeight: 700, fontSize: 15 }}>{store.name}</div>
         {store.address && <div>{store.address}</div>}
         {store.phone && <div>{store.phone}</div>}
@@ -32,7 +32,7 @@ export default function ReceiptView({ r, store, paperMm }: { r: Receipt; store: 
       <div className="rl"><span>Total quantity</span><span className="num">{qtyFmt(r.lines.reduce((a, l) => a + l.qty, 0))}</span></div>
       <div className="rl"><span>Subtotal</span><span className="num">{money(r.subtotal)}</span></div>
       <div className="rl"><span>Total discount</span><span className="num">{money(r.discountTotal)}</span></div>
-      <div className="rc-band rl"><span>Total</span><span className="num">{money(r.total)}</span></div>
+      <div className="rc-total"><span>Total</span><span className="num">{money(r.total)}</span></div>
       {r.payments.map((p, i) => (
         <div className="rl" key={i}><span>Paid by {p.name}</span><span className="num">{money(p.amount)}</span></div>
       ))}

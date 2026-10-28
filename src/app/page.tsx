@@ -8,6 +8,7 @@ import type { Kind, Party, Product } from '@/lib/types';
 import Drawer from '@/components/Drawer';
 import NumInput from '@/components/NumInput';
 import { useProfile } from '@/components/ProfileProvider';
+import { customerBalances } from '@/lib/ledger';
 import PrintPortal from '@/components/PrintPortal';
 import ReceiptView, { type Receipt } from '@/components/ReceiptView';
 import { useSettings } from '@/components/SettingsProvider';
@@ -28,9 +29,11 @@ export default function PosPage() {
   const canSell = can('pos.edit'), canDiscount = can('pos.discount'), canPrice = can('pos.price');
   const products = useLiveQuery(() => db.products.filter((p) => !p.deleted_at).toArray(), []);
   const accounts = useLiveQuery(() => db.accounts.toArray(), []);
+  const owed = useLiveQuery(() => customerBalances(), []);
   const customers = useLiveQuery(() => db.parties.filter((p) => p.type === 'customer' && !p.deleted_at).toArray(), []);
 
   const [q, setQ] = useState('');
+  const [cat, setCat] = useState('');
   const [msg, setMsg] = useState('');
   const [cart, setCart] = useState<Line[]>([]);
   const [billDisc, setBillDisc] = useState('');
@@ -58,11 +61,18 @@ export default function PosPage() {
 
   const byId = useMemo(() => new Map((products ?? []).map((p) => [p.id, p])), [products]);
 
+  const categories = useMemo(() => {
+    const m = new Map<string, number>();
+    (products ?? []).forEach((p) => { const c = (p.category ?? '').trim(); if (c) m.set(c, (m.get(c) ?? 0) + 1); });
+    return [...m.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).slice(0, 14).map(([c]) => c);
+  }, [products]);
+  const inCart = useMemo(() => new Map(cart.map((l) => [l.product_id, l.qty])), [cart]);
+
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
-    const all = (products ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
-    return (s ? all.filter((p) => p.name.toLowerCase().includes(s) || (p.barcode ?? '').includes(s)) : all).slice(0, 60);
-  }, [products, q]);
+    const all = (products ?? []).filter((p) => !cat || (p.category ?? '').trim() === cat).sort((a, b) => a.name.localeCompare(b.name));
+    return (s ? all.filter((p) => p.name.toLowerCase().includes(s) || (p.barcode ?? '').includes(s)) : all).slice(0, 80);
+  }, [products, q, cat]);
 
   function add(p: Product) {
     setCart((c) => {
@@ -81,6 +91,7 @@ export default function PosPage() {
     else { setMsg(`No product matches “${s}”`); if (sc.beep) beep(false); }
   }
   function onSearchKey(e: React.KeyboardEvent) {
+    if (e.key === 'Escape') { setQ(''); setMsg(''); return; }
     if (e.key === 'Enter' || (e.key === 'Tab' && sc.terminator === 'tab' && q.trim())) submitSearch(e);
   }
   // Scanners that send no Enter/Tab: add when the typing stops on an exact barcode.
@@ -170,7 +181,7 @@ export default function PosPage() {
   }
 
   async function complete(print: boolean) {
-    if (!cart.length || !accounts?.length) return;
+    if (!cart.length || !accounts?.length || !canSell || busy) return;
     if (pay.owed > 0 && !customer) { setMsg('Choose a customer to leave a balance unpaid.'); return; }
     if (!pay.changeOk) { setMsg('Received more than the total. Lower the non-cash amounts so change can be given in cash.'); return; }
     const used = splits.map((s, i) => ({ s, i, acc: accountOf(s.kind), amt: pay.net[i] }));
@@ -226,43 +237,72 @@ export default function PosPage() {
     return () => clearTimeout(t);
   }, [receipt, printAfter]);
 
+  // shortcuts: F2 = scan box, Ctrl+Enter = complete sale, Ctrl+Shift+Enter = complete and print
+  const completeRef = useRef(complete);
+  completeRef.current = complete;
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => {
+      if (e.key === 'F2') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); }
+      else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); completeRef.current(e.shiftKey); }
+    };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, []);
+
+  function clearInvoice() { setCart([]); setBillDisc(''); setSplits([{ kind: 'cash', amount: '' }]); setCustomer(null); setCq(''); setMsg(''); searchRef.current?.focus(); }
   function closeReceipt() { setReceipt(null); setPrintAfter(false); searchRef.current?.focus(); }
   const noAccounts = accounts && accounts.length === 0;
+  const ownes = customer ? owed?.[customer.id] ?? 0 : 0;
+  const canComplete = !!cart.length && !busy && !!accounts?.length && canSell;
 
   return (
     <div className="pos">
-      {/* left: products */}
+      {/* left: scan, search and products */}
       <section className="pos-left">
-        <input ref={searchRef} value={q} autoFocus placeholder="Scan a barcode or search products"
-          onChange={(e) => { setQ(e.target.value); setMsg(''); }} onKeyDown={onSearchKey} />
-        {msg && <div className="err">{msg}</div>}
+        <div className="pos-bar">
+          <input ref={searchRef} className="pos-search" value={q} autoFocus placeholder="Scan a barcode or search products"
+            aria-label="Scan or search" onChange={(e) => { setQ(e.target.value); setMsg(''); }} onKeyDown={onSearchKey} />
+          <div className="pos-hint">{msg ? <span className="err">{msg}</span> : <span className="mute">Scan or type, then Enter. F2 returns here.</span>}</div>
+          {categories.length > 0 && (
+            <div className="chips" role="group" aria-label="Category">
+              <button className={'chipbtn' + (cat === '' ? ' on' : '')} onClick={() => setCat('')}>All</button>
+              {categories.map((c) => <button key={c} className={'chipbtn' + (cat === c ? ' on' : '')} onClick={() => setCat(cat === c ? '' : c)}>{c}</button>)}
+            </div>
+          )}
+        </div>
         {products && products.length === 0 ? (
           <div className="empty">No products yet. Add them on the Products page.</div>
+        ) : list.length === 0 ? (
+          <div className="empty">Nothing matches “{q}”.</div>
         ) : (
-          <div className="grid">
-            {list.map((p) => (
-              <button key={p.id} className="tile" onClick={() => { add(p); searchRef.current?.focus(); }}>
-                <span className="name">{p.name}</span>
-                <span className="row">
-                  <span className="num">{money(p.sale_price)}</span>
-                  <span className={'num ' + (p.stock_qty <= 0 ? 'warn' : 'mute')}>{qtyFmt(p.stock_qty)} in stock</span>
-                </span>
-              </button>
-            ))}
+          <div className="pgrid">
+            {list.map((p) => {
+              const n = inCart.get(p.id);
+              const low = p.stock_qty <= 0;
+              return (
+                <button key={p.id} className={'ptile' + (n ? ' in' : '')} onClick={() => { add(p); searchRef.current?.focus(); }}>
+                  {n ? <span className="pbadge num">{qtyFmt(n)}</span> : null}
+                  <span className="pname">{p.name}</span>
+                  <span className="pprice num">{money(p.sale_price)}</span>
+                  <span className={'pstock num' + (low ? ' low' : '')}>{low ? `Out of stock (${qtyFmt(p.stock_qty)})` : `${qtyFmt(p.stock_qty)} in stock`}</span>
+                </button>
+              );
+            })}
           </div>
         )}
       </section>
 
-      {/* right: invoice */}
+      {/* right: the invoice */}
       <aside className="invoice">
         <div className="inv-head">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <div className="inv-title">
             <h2>Invoice</h2>
-            <span className="mute num">{cart.length} {cart.length === 1 ? 'product' : 'products'}, {qtyFmt(calc.units)} {calc.units === 1 ? 'unit' : 'units'}</span>
+            <span className="pill2 num">{cart.length} {cart.length === 1 ? 'product' : 'products'}, {qtyFmt(calc.units)} {calc.units === 1 ? 'unit' : 'units'}</span>
+            {cart.length > 0 && <button className="btn small quiet" onClick={clearInvoice}>Clear</button>}
           </div>
           {customer ? (
             <div className="chip">
-              <span>{customer.name}{customer.phone ? `, ${customer.phone}` : ''}</span>
+              <span><b>{customer.name}</b>{customer.phone ? <span className="mute">, {customer.phone}</span> : null}{ownes > 0.5 && <span className="warn num">, owes {money(ownes)}</span>}</span>
               <button className="x" onClick={() => setCustomer(null)} aria-label="Remove customer">×</button>
             </div>
           ) : newCust ? (
@@ -294,52 +334,61 @@ export default function PosPage() {
         </div>
 
         <div className="lines">
-          {cart.length === 0 && <div className="empty">Scan or tap a product to start the invoice.</div>}
+          {cart.length === 0 && (
+            <div className="inv-empty"><b>Ready for the next sale</b><span className="mute">Scan a barcode or tap a product.</span></div>
+          )}
           {cart.map((l, i) => {
             const stock = byId.get(l.product_id)?.stock_qty ?? 0;
             const listPrice = byId.get(l.product_id)?.sale_price;
             return (
-              <div className="line" key={l.product_id}>
-                <div className="top2">
-                  <span>{l.name}</span>
-                  <span className="num">{money(calc.rows[i].total)}</span>
+              <div className="pl" key={l.product_id}>
+                <div className="pl-top">
+                  <span className="pl-name">{l.name}</span>
+                  <span className="pl-total num">{money(calc.rows[i].total)}</span>
+                  <button className="x" onClick={() => drop(i)} aria-label={`Remove ${l.name}`}>×</button>
                 </div>
-                <div className="ctl">
-                  <button className="step" onClick={() => { const n = round3(l.qty - 1); if (n > 0) patch(i, { qty: n }); else drop(i); }} aria-label="Less">−</button>
-                  <NumInput className="num" label="Quantity" live decimals={3} value={l.qty} onCommit={(n) => patch(i, { qty: n })} />
-                  <button className="step" onClick={() => patch(i, { qty: round3(l.qty + 1) })} aria-label="More">+</button>
-                  {canDiscount
-                    ? <input className="disc" placeholder="Discount, e.g. 50 or 10%" value={l.disc} onChange={(e) => patch(i, { disc: e.target.value })} />
-                    : <span />}
-                  <button className="x" onClick={() => drop(i)} aria-label="Remove">×</button>
-                </div>
-                <div className="priceRow mute num">
-                  <span>Price</span>
+                <div className="pl-ctl">
+                  <div className="stepper">
+                    <button className="step" onClick={() => { const n = round3(l.qty - 1); if (n > 0) patch(i, { qty: n }); else drop(i); }} aria-label="Less">−</button>
+                    <NumInput className="num" label="Quantity" live decimals={3} value={l.qty} onCommit={(n) => patch(i, { qty: n })} />
+                    <button className="step" onClick={() => patch(i, { qty: round3(l.qty + 1) })} aria-label="More">+</button>
+                  </div>
+                  <span className="times mute">×</span>
                   {canPrice
-                    ? <NumInput className="num" label="Price" clearOnFocus value={l.unit_price} onCommit={(n) => patch(i, { unit_price: n })} />
+                    ? <NumInput className="num pl-price" label="Price" clearOnFocus value={l.unit_price} onCommit={(n) => patch(i, { unit_price: n })} />
                     : <b className="num">{money(l.unit_price)}</b>}
-                  {listPrice !== undefined && listPrice !== l.unit_price && <span>list price {money(listPrice)}</span>}
-                  {l.qty > stock && <span className="warn">stock will go to {qtyFmt(stock - l.qty)}</span>}
+                  {canDiscount
+                    ? <input className="pl-disc" aria-label="Discount" placeholder="Disc. 50 or 10%" value={l.disc} onChange={(e) => patch(i, { disc: e.target.value })} />
+                    : <span />}
                 </div>
+                {(l.qty > stock || (listPrice !== undefined && listPrice !== l.unit_price)) && (
+                  <div className="pl-note num">
+                    {listPrice !== undefined && listPrice !== l.unit_price && <span className="mute">list price {money(listPrice)}</span>}
+                    {l.qty > stock && <span className="warn">stock will go to {qtyFmt(stock - l.qty)}</span>}
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
 
-        <div className="sum">
-          <div className="r"><span className="mute">Total products</span><span className="num">{cart.length}</span></div>
-          <div className="r"><span className="mute">Total quantity</span><span className="num">{qtyFmt(calc.units)}</span></div>
-          <div className="r"><span className="mute">Subtotal</span><span className="num">{money(calc.subtotal)}</span></div>
-          <div className="r"><span className="mute">Product discounts</span><span className="num">{money(calc.itemDisc)}</span></div>
+        <div className="pos-sum">
+          <div className="r sub">
+            <span className="mute">Subtotal <span className="num">{money(calc.subtotal)}</span></span>
+            {calc.discountTotal > 0 && <span className="mute">Discount <span className="num">-{money(calc.discountTotal)}</span></span>}
+          </div>
           {canDiscount && (
             <div className="r"><span className="mute">Bill discount</span>
-              <input placeholder="50 or 10%" value={billDisc} onChange={(e) => setBillDisc(e.target.value)} />
+              <input placeholder="50 or 10%" value={billDisc} aria-label="Bill discount" onChange={(e) => setBillDisc(e.target.value)} />
             </div>
           )}
-          <div className="r"><span>Total discount</span><span className="num">{money(calc.discountTotal)}</span></div>
-          <div className="r total"><span>Total</span><span className="num">{money(calc.total)}</span></div>
+          <div className="pos-total"><span>Total</span><span className="num">{money(calc.total)}</span></div>
 
-          <div style={{ display: 'grid', gap: 6 }}>
+          <div className="pay">
+            <div className="pay-head">
+              <span className="mute">Payment</span>
+              {splits.length < KINDS.length && <button className="btn small quiet" onClick={addSplit}>Split payment</button>}
+            </div>
             {splits.map((s, i) => (
               <div className="split-row" key={s.kind}>
                 <select value={s.kind} onChange={(e) => setSplit(i, { kind: e.target.value as Kind })} aria-label="Payment method">
@@ -352,20 +401,15 @@ export default function PosPage() {
                 {splits.length > 1 ? <button className="x" onClick={() => removeSplit(i)} aria-label="Remove payment">×</button> : <span />}
               </div>
             ))}
-            {splits.length < KINDS.length && (
-              <button className="btn small quiet" style={{ justifySelf: 'start' }} onClick={addSplit}>Split payment</button>
-            )}
+            {noAccounts && <div className="err">Accounts are not loaded yet. Connect to the internet and press Sync now once.</div>}
+            {pay.change > 0 && <div className="r"><span className="mute">Change to give back</span><b className="num">{money(pay.change)}</b></div>}
+            {pay.owed > 0 && <div className="r"><span className="mute">Balance left on customer</span><span className="num warn">{money(pay.owed)}</span></div>}
           </div>
-          {noAccounts && <div className="err">Accounts are not loaded yet. Connect to the internet and press Sync now once.</div>}
-          {pay.change > 0 && <div className="r"><span className="mute">Change</span><span className="num">{money(pay.change)}</span></div>}
-          {pay.owed > 0 && <div className="r"><span className="mute">Balance left on customer</span><span className="num warn">{money(pay.owed)}</span></div>}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <button className="btn primary" style={{ height: 44 }} disabled={!cart.length || busy || !accounts?.length || !canSell} onClick={() => complete(false)}>
-              {busy ? 'Saving…' : 'Complete sale'}
+          <div className="pos-actions">
+            <button className="btn primary pos-go" disabled={!canComplete} onClick={() => complete(false)} title="Ctrl+Enter">
+              {busy ? 'Saving…' : <>Complete sale <span className="num">{money(calc.total)}</span></>}
             </button>
-            <button className="btn" style={{ height: 44 }} disabled={!cart.length || busy || !accounts?.length || !canSell} onClick={() => complete(true)}>
-              Complete and print
-            </button>
+            <button className="btn pos-print" disabled={!canComplete} onClick={() => complete(true)} title="Ctrl+Shift+Enter">Complete and print</button>
           </div>
         </div>
       </aside>

@@ -7,10 +7,7 @@
     "dev": "next dev",
     "prebuild": "node scripts/gen-version.mjs",
     "build": "next build",
-    "typecheck": "tsc --noEmit",
-    "tauri": "tauri",
-    "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
@@ -24,7 +21,6 @@
     "react-dom": "18.3.1"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.4",
     "@types/jsbarcode": "^3.11.4",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",

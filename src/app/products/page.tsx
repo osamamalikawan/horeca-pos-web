@@ -175,7 +175,7 @@ export default function ProductsPage() {
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input style={{ width: 70, height: 30 }} inputMode="numeric" aria-label="Number of labels" placeholder={String(settings.label.copies)}
                     value={copies} onChange={(e) => setCopies(e.target.value)} />
-                  <button className="btn small" type="button" onClick={() => printPage(labelPage(settings.label.widthMm, settings.label.heightMm))}>
+                  <button className="btn small" type="button" onClick={() => printPage(labelPage(settings.label.widthMm, settings.label.heightMm), 'label')}>
                     Print labels
                   </button>
                 </div>

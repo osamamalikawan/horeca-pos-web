@@ -112,7 +112,7 @@ export default function LedgersPage() {
             <button className="btn quiet" onClick={() => setOpenId(null)}>Close</button>
             <span style={{ display: 'flex', gap: 8 }}>
               <button className="btn" disabled={!statement} onClick={exportCsv}>Export CSV</button>
-              <button className="btn primary" disabled={!statement} onClick={() => printPage('@page{size:A4;margin:12mm}')}>Print statement</button>
+              <button className="btn primary" disabled={!statement} onClick={() => printPage('@page{size:A4;margin:12mm}', 'document')}>Print statement</button>
             </span>
           </>
         )}>

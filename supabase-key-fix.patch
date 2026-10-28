@@ -1,0 +1,22 @@
+--- a/src/lib/supabase.ts
++++ b/src/lib/supabase.ts
+@@ -1,7 +1,11 @@
+ import { createClient } from '@supabase/supabase-js';
+ 
+ const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+-const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
++// Accepts the new "sb_publishable_..." key or the legacy anon key.
++// (Each name must be written out in full so Next.js can inline it at build time.)
++const key =
++  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
++  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+ 
+ export const supabase = url && key
+   ? createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true } })
+--- a/.env.local.example
++++ b/.env.local.example
+@@ -1,2 +1,3 @@
+ NEXT_PUBLIC_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+-NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR-ANON-KEY
++# New "sb_publishable_..." key, or the legacy anon key under NEXT_PUBLIC_SUPABASE_ANON_KEY
++NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=YOUR-PUBLISHABLE-KEY

@@ -6,6 +6,7 @@ import type { Settings, Theme } from '@/lib/settings';
 import PrintPortal from '@/components/PrintPortal';
 import ReceiptView, { type Receipt } from '@/components/ReceiptView';
 import LabelView from '@/components/LabelView';
+import PrinterSelect from '@/components/PrinterSelect';
 
 const SAMPLE: Receipt = {
   no: 'TEST-00001', date: new Date().toISOString(), customer: null,
@@ -28,7 +29,7 @@ export default function SettingsPage() {
   function testPrint(kind: 'receipt' | 'label') {
     setTest(kind);
     setTimeout(() => {
-      printPage(kind === 'receipt' ? RECEIPT_PAGE : labelPage(s.label.widthMm, s.label.heightMm));
+      printPage(kind === 'receipt' ? RECEIPT_PAGE : labelPage(s.label.widthMm, s.label.heightMm), kind === 'receipt' ? 'receipt' : 'label');
       setTimeout(() => setTest(null), 500);
     }, 200);
   }
@@ -83,12 +84,12 @@ export default function SettingsPage() {
               <option value={80}>80 mm</option>
             </select>
           </label>
-          <label>Printer name<input value={s.receipt.printerName} placeholder="e.g. POS-80" onChange={(e) => set('receipt', { printerName: e.target.value })} /></label>
+          <label>Printer<PrinterSelect value={s.receipt.printerName} onChange={(name) => set('receipt', { printerName: name })} /></label>
         </div>
         <label className="check"><input type="checkbox" checked={s.receipt.autoPrint} onChange={(e) => set('receipt', { autoPrint: e.target.checked })} />Print the invoice automatically after every sale</label>
         <div className="mute" style={{ fontSize: 13 }}>
-          In the browser, printing opens the system print dialog, where you pick the printer once and can set it as the default.
-          The printer name is saved for the desktop app, which will print silently to it.
+          In the desktop app, receipts print straight to the printer chosen here, with no print dialog.
+          In a browser, a program cannot see your printers, so the normal print dialog opens and you choose the printer there.
         </div>
         <div><button className="btn" onClick={() => testPrint('receipt')}>Print test receipt</button></div>
       </section>
@@ -131,14 +132,15 @@ export default function SettingsPage() {
           <label>Label height (mm)<input inputMode="decimal" value={s.label.heightMm} onChange={(e) => set('label', { heightMm: num(e.target.value, 30) })} /></label>
         </div>
         <div className="two">
-          <label>Printer name<input value={s.label.printerName} placeholder="e.g. TSC TE244" onChange={(e) => set('label', { printerName: e.target.value })} /></label>
+          <label>Printer<PrinterSelect value={s.label.printerName} onChange={(name) => set('label', { printerName: name })} /></label>
           <label>Labels per print<input inputMode="numeric" value={s.label.copies} onChange={(e) => set('label', { copies: Math.floor(num(e.target.value, 1)) })} /></label>
         </div>
         <label className="check"><input type="checkbox" checked={s.label.showName} onChange={(e) => set('label', { showName: e.target.checked })} />Show product name</label>
         <label className="check"><input type="checkbox" checked={s.label.showPrice} onChange={(e) => set('label', { showPrice: e.target.checked })} />Show sale price</label>
         <div className="bc"><LabelView name="Sample product" price={250} barcode="2012345678903" s={s.label} /></div>
         <div className="mute" style={{ fontSize: 13 }}>
-          Choose the sticker printer in the print dialog and set the same paper size there. Labels print one per sticker.
+          In the desktop app, labels print straight to this printer at the size above, one label per sticker.
+          In a browser, choose the sticker printer in the print dialog and set the same paper size there.
         </div>
         <div><button className="btn" onClick={() => testPrint('label')}>Print test label</button></div>
       </section>

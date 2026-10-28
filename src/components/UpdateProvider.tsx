@@ -20,6 +20,9 @@ export const useDesktopUpdate = () => useContext(UpdateCtx);
 const inDesktopApp = () => typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__;
 const TRIED_KEY = 'horeca-update-tried';
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+// GitHub answers "Not Found" when no update has been published, which the updater reports as a JSON error
+const friendly = (m: string) => /valid release json|not found|404|expected value|unexpected token/i.test(m)
+  ? 'No update has been published yet, or the update address cannot be reached.' : m;
 
 export default function UpdateProvider({ children }: { children: React.ReactNode }) {
   const { sync } = useSync();
@@ -49,7 +52,7 @@ export default function UpdateProvider({ children }: { children: React.ReactNode
       const found = await checkUpdate();
       if (found) { update.current = found; setVersion(found.version); setNotes(found.body ?? null); setStatus('available'); }
       else { update.current = null; setVersion(null); setNotes(null); setStatus('latest'); }
-    } catch (e) { setError(message(e)); setStatus('error'); }
+    } catch (e) { setError(friendly(message(e))); setStatus('error'); }
   }, []);
 
   const install = useCallback(async () => {

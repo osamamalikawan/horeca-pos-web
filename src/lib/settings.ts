@@ -21,18 +21,23 @@ export const DEFAULTS: Settings = {
 
 export const SETTINGS_KEY = 'horeca-settings';
 
+/** Fills anything missing with defaults, so settings from an older or newer version still load. */
+export function normalizeSettings(p: any): Settings {
+  const o = p && typeof p === 'object' ? p : {};
+  return {
+    theme: ['light', 'dark', 'system'].includes(o.theme) ? o.theme : DEFAULTS.theme,
+    store: { ...DEFAULTS.store, ...o.store },
+    receipt: { ...DEFAULTS.receipt, ...o.receipt },
+    label: { ...DEFAULTS.label, ...o.label },
+    scanner: { ...DEFAULTS.scanner, ...o.scanner },
+  };
+}
+
 export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return DEFAULTS;
-    const p = JSON.parse(raw);
-    return {
-      theme: p.theme ?? DEFAULTS.theme,
-      store: { ...DEFAULTS.store, ...p.store },
-      receipt: { ...DEFAULTS.receipt, ...p.receipt },
-      label: { ...DEFAULTS.label, ...p.label },
-      scanner: { ...DEFAULTS.scanner, ...p.scanner },
-    };
+    return normalizeSettings(JSON.parse(raw));
   } catch {
     return DEFAULTS;
   }

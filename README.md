@@ -1,12 +1,11 @@
 # Horeca POS
 
-Next.js (static export) + Supabase + Dexie (offline) + Tauri desktop app.
+Next.js (static export) + Supabase + Dexie (offline) — Tauri shell comes next.
 
 ## Setup
 1. Supabase: create a project, run `supabase/schema.sql` in the SQL editor.
 2. Authentication > Users: add your login (email + password). Turn off public sign-ups.
-3. Create `.env.local` with `NEXT_PUBLIC_SUPABASE_URL` and
-   `NEXT_PUBLIC_SUPABASE_ANON_KEY` (or `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`).
+3. `cp .env.local.example .env.local` and fill in the project URL and anon key.
 4. `npm install` then `npm run dev` (http://localhost:3000).
 5. Sign in once while online. The first sync loads the four accounts (Cash, Bank, Easypaisa, JazzCash).
 
@@ -17,22 +16,7 @@ Next.js (static export) + Supabase + Dexie (offline) + Tauri desktop app.
 - Stock is an append-only ledger (stock_movements); the server keeps products.stock_qty up to date.
 
 ## Deploy
-Push to GitHub, import in Vercel, and add the two Supabase env vars. `npm run build`
-outputs a static site to `out/`.
-
-## Windows desktop app
-Install Node.js, Rust with the MSVC toolchain, Microsoft C++ Build Tools, and
-the WebView2 Runtime. Then, from Windows PowerShell in this project:
-
-1. Create `.env.local` with the Supabase URL and publishable/anon key. These
-   public frontend values are embedded in the static app at build time.
-2. Run `npm install`.
-3. Run `npm run desktop:dev` to launch the app in its Tauri window.
-4. Run `npm run desktop:build` to create the Windows NSIS installer `.exe`.
-
-The installer is written under
-`src-tauri/target/release/bundle/nsis/`. The desktop app keeps its UI and local
-database available offline; Supabase sign-in and cloud sync require internet.
+Push to GitHub, import in Vercel, add the two env vars. `npm run build` outputs a static site to `out/`, which Tauri will bundle later.
 
 ## Update notes
 - Run `supabase/migration_sales_returns_purchases.sql` in the Supabase SQL editor before using Sales (cancel), Returns, Suppliers and Purchases.
