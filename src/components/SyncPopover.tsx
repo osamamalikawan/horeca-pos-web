@@ -8,7 +8,7 @@ import { useSync } from './SyncProvider';
 import { useDesktopUpdate } from './UpdateProvider';
 
 export default function SyncPopover() {
-  const { status, lastSync, error, sync, deadline, now, online } = useSync();
+  const { status, lastSync, error, sync, deadline, now, online, subChecked } = useSync();
   const desk = useDesktopUpdate();
   const [open, setOpen] = useState(false);
   const [shell, setShell] = useState<string | null>(null);
@@ -63,6 +63,8 @@ export default function SyncPopover() {
           <dl className="kv">
             <dt>Last synced</dt>
             <dd className="num">{lastSync ? `${ago(lastSync, now)}, ${new Date(lastSync).toLocaleString()}` : 'Never'}</dd>
+            <dt>Subscription checked</dt>
+            <dd className="num">{subChecked ? ago(subChecked, now) : 'Not yet'}</dd>
             <dt>Waiting to upload</dt>
             <dd className="num">{waiting.sales} sale(s){otherChanges > 0 ? `, ${otherChanges} other changes` : ''}</dd>
             <dt>Sync needed within</dt>

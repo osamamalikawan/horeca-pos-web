@@ -1,0 +1,136 @@
+diff --git a/src/components/SyncPopover.tsx b/src/components/SyncPopover.tsx
+index 7fad4be..0312a0f 100644
+--- a/src/components/SyncPopover.tsx
++++ b/src/components/SyncPopover.tsx
+@@ -8,7 +8,7 @@ import { useSync } from './SyncProvider';
+ import { useDesktopUpdate } from './UpdateProvider';
+ 
+ export default function SyncPopover() {
+-  const { status, lastSync, error, sync, deadline, now, online } = useSync();
++  const { status, lastSync, error, sync, deadline, now, online, subChecked } = useSync();
+   const desk = useDesktopUpdate();
+   const [open, setOpen] = useState(false);
+   const [shell, setShell] = useState<string | null>(null);
+@@ -63,6 +63,8 @@ export default function SyncPopover() {
+           <dl className="kv">
+             <dt>Last synced</dt>
+             <dd className="num">{lastSync ? `${ago(lastSync, now)}, ${new Date(lastSync).toLocaleString()}` : 'Never'}</dd>
++            <dt>Subscription checked</dt>
++            <dd className="num">{subChecked ? ago(subChecked, now) : 'Not yet'}</dd>
+             <dt>Waiting to upload</dt>
+             <dd className="num">{waiting.sales} sale(s){otherChanges > 0 ? `, ${otherChanges} other changes` : ''}</dd>
+             <dt>Sync needed within</dt>
+diff --git a/src/components/SyncProvider.tsx b/src/components/SyncProvider.tsx
+index c5f4a27..c7fbe5a 100644
+--- a/src/components/SyncProvider.tsx
++++ b/src/components/SyncProvider.tsx
+@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
+ import { useLiveQuery } from 'dexie-react-hooks';
+ import { db } from '@/lib/db';
+ import { syncNow } from '@/lib/sync';
+-import { checkSubscription, lockDevice, SEEN_KEY, SYNC_LIMIT_MS } from '@/lib/subscription';
++import { checkSubscription, lockDevice, SEEN_KEY, SUB_CHECKED_KEY, SYNC_LIMIT_MS } from '@/lib/subscription';
+ import { useProfile } from './ProfileProvider';
+ import { SYNC_AFTER_CHANGE_MS, SYNC_INTERVAL_MS } from '@/lib/syncTiming';
+ 
+@@ -11,10 +11,11 @@ type Status = 'idle' | 'syncing' | 'error' | 'offline';
+ interface Ctx {
+   status: Status; lastSync: string | null; error: string | null; pending: number;
+   sync: () => Promise<void>; deadline: number | null; now: number; online: boolean;
++  subChecked: string | null;     // last time the subscription was read from the server
+ }
+ 
+ const SyncCtx = createContext<Ctx>({
+-  status: 'idle', lastSync: null, error: null, pending: 0, sync: async () => {}, deadline: null, now: 0, online: true,
++  status: 'idle', lastSync: null, error: null, pending: 0, sync: async () => {}, deadline: null, now: 0, online: true, subChecked: null,
+ });
+ export const useSync = () => useContext(SyncCtx);
+ 
+@@ -26,6 +27,7 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
+   const [now, setNow] = useState(() => Date.now());
+   const [ready, setReady] = useState(false);                     // first sync attempt finished
+   const [online, setOnline] = useState(true);
++  const [subChecked, setSubChecked] = useState<string | null>(null);
+   const busy = useRef(false);
+   const { refresh: refreshProfile } = useProfile();
+   const pendingRaw = useLiveQuery(() => db.outbox.count(), []);
+@@ -40,13 +42,20 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
+     if (!navigator.onLine) { setStatus('offline'); setReady(true); return; }
+     busy.current = true; setStatus('syncing'); setError(null);
+     try {
++      // Step 1: the subscription. Always first, and it does not wait for (or depend on) the data sync.
++      const sub = await checkSubscription();
++      if (!sub.ok) {
++        // Locked: still try once to upload waiting sales (as before), but the lock does not depend on it.
++        try { await syncNow(); } catch { /* the device is locked either way */ }
++        lockDevice(sub.reason); setStatus('idle'); return;
++      }
++      if (sub.reached) { try { setSubChecked(localStorage.getItem(SUB_CHECKED_KEY)); } catch { /* ignore */ } }
++      // Step 2: the data (sales, products, ...). If this fails the subscription result above still stands.
+       const r = await syncNow();
+       const t = new Date(r.at).getTime();
+       setLastSync(r.at); setBaseline(t); setStatus('idle');
+       localStorage.setItem(SEEN_KEY, String(t));
+-      const sub = await checkSubscription();
+-      if (!sub.ok) lockDevice(sub.reason);
+-      else refreshProfile();
++      refreshProfile();
+     } catch (e: any) {
+       setError(e?.message ?? String(e)); setStatus('error');
+     } finally {
+@@ -81,6 +90,7 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
+       setBaseline(new Date((ls ?? first)!).getTime());
+     })();
+     setOnline(navigator.onLine);
++    try { setSubChecked(localStorage.getItem(SUB_CHECKED_KEY)); } catch { /* ignore */ }
+     sync();                                        // on start
+     const timer = setInterval(sync, SYNC_INTERVAL_MS);   // every hour
+     const goOnline = () => { setOnline(true); sync(); };
+@@ -113,7 +123,7 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
+ 
+   const deadline = baseline !== null ? baseline + SYNC_LIMIT_MS : null;
+   return (
+-    <SyncCtx.Provider value={{ status, lastSync, error, pending, sync, deadline, now, online }}>
++    <SyncCtx.Provider value={{ status, lastSync, error, pending, sync, deadline, now, online, subChecked }}>
+       {children}
+     </SyncCtx.Provider>
+   );
+diff --git a/src/lib/subscription.ts b/src/lib/subscription.ts
+index 545ba51..74d6ae2 100644
+--- a/src/lib/subscription.ts
++++ b/src/lib/subscription.ts
+@@ -3,6 +3,7 @@ import { supabase } from './supabase';
+ export const SYNC_LIMIT_MS = 72 * 60 * 60 * 1000;   // must sync at least every 3 days
+ export const LOCK_KEY = 'horeca-lock';
+ export const SEEN_KEY = 'horeca-last-seen';          // latest clock reading, to spot a clock set back
++export const SUB_CHECKED_KEY = 'horeca-sub-checked'; // last time the subscription switch was actually read
+ 
+ export type LockReason = 'sync' | 'clock' | 'paused' | 'stopped' | 'expired' | 'disabled';
+ 
+@@ -25,15 +26,20 @@ export function lockDevice(reason: LockReason) {
+   supabase?.auth.signOut({ scope: 'local' });
+ }
+ 
+-/** Reads the subscription switch. Anything unreadable (offline, table missing) counts as active. */
+-export async function checkSubscription(): Promise<{ ok: true } | { ok: false; reason: LockReason }> {
+-  if (!supabase) return { ok: true };
++/**
++ * Sync type 1: reads the subscription switch. It is its own small request, so it runs first and does not
++ * depend on the data sync (a broken data sync must never hide a paused or ended subscription).
++ * Anything unreadable (offline, table missing) counts as active, and `reached` says whether it was really read.
++ */
++export async function checkSubscription(): Promise<{ ok: true; reached: boolean } | { ok: false; reason: LockReason }> {
++  if (!supabase) return { ok: true, reached: false };
+   try {
+     const { data, error } = await supabase.from('subscription').select('status, valid_until').limit(1).maybeSingle();
+-    if (error || !data) return { ok: true };
++    if (error || !data) return { ok: true, reached: false };
++    try { localStorage.setItem(SUB_CHECKED_KEY, new Date().toISOString()); } catch { /* ignore */ }
+     if (data.status === 'paused') return { ok: false, reason: 'paused' };
+     if (data.status === 'stopped') return { ok: false, reason: 'stopped' };
+     if (data.valid_until && new Date(data.valid_until).getTime() < Date.now()) return { ok: false, reason: 'expired' };
+-    return { ok: true };
+-  } catch { return { ok: true }; }
++    return { ok: true, reached: true };
++  } catch { return { ok: true, reached: false }; }
+ }

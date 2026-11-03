@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { syncNow } from '@/lib/sync';
-import { checkSubscription, lockDevice, SEEN_KEY, SYNC_LIMIT_MS } from '@/lib/subscription';
+import { checkSubscription, lockDevice, SEEN_KEY, SUB_CHECKED_KEY, SYNC_LIMIT_MS } from '@/lib/subscription';
 import { useProfile } from './ProfileProvider';
 import { SYNC_AFTER_CHANGE_MS, SYNC_INTERVAL_MS } from '@/lib/syncTiming';
 
@@ -11,10 +11,11 @@ type Status = 'idle' | 'syncing' | 'error' | 'offline';
 interface Ctx {
   status: Status; lastSync: string | null; error: string | null; pending: number;
   sync: () => Promise<void>; deadline: number | null; now: number; online: boolean;
+  subChecked: string | null;     // last time the subscription was read from the server
 }
 
 const SyncCtx = createContext<Ctx>({
-  status: 'idle', lastSync: null, error: null, pending: 0, sync: async () => {}, deadline: null, now: 0, online: true,
+  status: 'idle', lastSync: null, error: null, pending: 0, sync: async () => {}, deadline: null, now: 0, online: true, subChecked: null,
 });
 export const useSync = () => useContext(SyncCtx);
 
@@ -26,6 +27,7 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
   const [now, setNow] = useState(() => Date.now());
   const [ready, setReady] = useState(false);                     // first sync attempt finished
   const [online, setOnline] = useState(true);
+  const [subChecked, setSubChecked] = useState<string | null>(null);
   const busy = useRef(false);
   const { refresh: refreshProfile } = useProfile();
   const pendingRaw = useLiveQuery(() => db.outbox.count(), []);
@@ -40,13 +42,20 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
     if (!navigator.onLine) { setStatus('offline'); setReady(true); return; }
     busy.current = true; setStatus('syncing'); setError(null);
     try {
+      // Step 1: the subscription. Always first, and it does not wait for (or depend on) the data sync.
+      const sub = await checkSubscription();
+      if (!sub.ok) {
+        // Locked: still try once to upload waiting sales (as before), but the lock does not depend on it.
+        try { await syncNow(); } catch { /* the device is locked either way */ }
+        lockDevice(sub.reason); setStatus('idle'); return;
+      }
+      if (sub.reached) { try { setSubChecked(localStorage.getItem(SUB_CHECKED_KEY)); } catch { /* ignore */ } }
+      // Step 2: the data (sales, products, ...). If this fails the subscription result above still stands.
       const r = await syncNow();
       const t = new Date(r.at).getTime();
       setLastSync(r.at); setBaseline(t); setStatus('idle');
       localStorage.setItem(SEEN_KEY, String(t));
-      const sub = await checkSubscription();
-      if (!sub.ok) lockDevice(sub.reason);
-      else refreshProfile();
+      refreshProfile();
     } catch (e: any) {
       setError(e?.message ?? String(e)); setStatus('error');
     } finally {
@@ -81,6 +90,7 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
       setBaseline(new Date((ls ?? first)!).getTime());
     })();
     setOnline(navigator.onLine);
+    try { setSubChecked(localStorage.getItem(SUB_CHECKED_KEY)); } catch { /* ignore */ }
     sync();                                        // on start
     const timer = setInterval(sync, SYNC_INTERVAL_MS);   // every hour
     const goOnline = () => { setOnline(true); sync(); };
@@ -113,7 +123,7 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
 
   const deadline = baseline !== null ? baseline + SYNC_LIMIT_MS : null;
   return (
-    <SyncCtx.Provider value={{ status, lastSync, error, pending, sync, deadline, now, online }}>
+    <SyncCtx.Provider value={{ status, lastSync, error, pending, sync, deadline, now, online, subChecked }}>
       {children}
     </SyncCtx.Provider>
   );

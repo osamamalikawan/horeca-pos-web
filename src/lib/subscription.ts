@@ -3,6 +3,7 @@ import { supabase } from './supabase';
 export const SYNC_LIMIT_MS = 72 * 60 * 60 * 1000;   // must sync at least every 3 days
 export const LOCK_KEY = 'horeca-lock';
 export const SEEN_KEY = 'horeca-last-seen';          // latest clock reading, to spot a clock set back
+export const SUB_CHECKED_KEY = 'horeca-sub-checked'; // last time the subscription switch was actually read
 
 export type LockReason = 'sync' | 'clock' | 'paused' | 'stopped' | 'expired' | 'disabled';
 
@@ -25,15 +26,20 @@ export function lockDevice(reason: LockReason) {
   supabase?.auth.signOut({ scope: 'local' });
 }
 
-/** Reads the subscription switch. Anything unreadable (offline, table missing) counts as active. */
-export async function checkSubscription(): Promise<{ ok: true } | { ok: false; reason: LockReason }> {
-  if (!supabase) return { ok: true };
+/**
+ * Sync type 1: reads the subscription switch. It is its own small request, so it runs first and does not
+ * depend on the data sync (a broken data sync must never hide a paused or ended subscription).
+ * Anything unreadable (offline, table missing) counts as active, and `reached` says whether it was really read.
+ */
+export async function checkSubscription(): Promise<{ ok: true; reached: boolean } | { ok: false; reason: LockReason }> {
+  if (!supabase) return { ok: true, reached: false };
   try {
     const { data, error } = await supabase.from('subscription').select('status, valid_until').limit(1).maybeSingle();
-    if (error || !data) return { ok: true };
+    if (error || !data) return { ok: true, reached: false };
+    try { localStorage.setItem(SUB_CHECKED_KEY, new Date().toISOString()); } catch { /* ignore */ }
     if (data.status === 'paused') return { ok: false, reason: 'paused' };
     if (data.status === 'stopped') return { ok: false, reason: 'stopped' };
     if (data.valid_until && new Date(data.valid_until).getTime() < Date.now()) return { ok: false, reason: 'expired' };
-    return { ok: true };
-  } catch { return { ok: true }; }
+    return { ok: true, reached: true };
+  } catch { return { ok: true, reached: false }; }
 }
