@@ -25,8 +25,8 @@ export default function GlobalShortcuts() {
     () => [...NAV_GROUPS.flatMap((g) => g.items), ...ACCOUNT_ITEMS].filter((n) => { const need = permForPath(n.href); return !need || can(need); }),
     [can],
   );
-  const canPos = pages.some((p) => p.href === '/');
-  const goPos = useCallback(() => { if (canPos) router.push('/'); }, [canPos, router]);
+  const canPos = pages.some((p) => p.href === '/pos/');
+  const goPos = useCallback(() => { if (canPos) router.push('/pos/'); }, [canPos, router]);
 
   // always call the newest handlers from one listener
   const h = useRef({ pages, drafts, active, canPos });

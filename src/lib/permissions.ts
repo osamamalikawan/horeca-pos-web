@@ -2,6 +2,7 @@ export interface ModuleDef { key: string; label: string; actions: { key: string;
 
 // permission string = "<module>.<action>", e.g. "pos.edit"
 export const MODULES: ModuleDef[] = [
+  { key: 'dashboard', label: 'Dashboard', actions: [{ key: 'view', label: 'Open' }] },
   { key: 'pos', label: 'POS', actions: [
     { key: 'view', label: 'Open' }, { key: 'edit', label: 'Make sales' },
     { key: 'discount', label: 'Give discounts' }, { key: 'price', label: 'Change prices' } ] },
@@ -32,13 +33,13 @@ export function withViews(perms: string[]): string[] {
 export const PRESETS: Record<string, string[]> = {
   Cashier: ['pos.view', 'pos.edit', 'sales.view', 'returns.view', 'customers.view', 'customers.edit'],
   Manager: ALL_PERMS.filter((p) => !p.startsWith('settings.') && !p.startsWith('accounts.edit') && p !== 'employees.edit'),
-  Accountant: ['accounts.view', 'accounts.edit', 'expenses.view', 'expenses.edit', 'payments.view', 'payments.edit',
+  Accountant: ['dashboard.view', 'accounts.view', 'accounts.edit', 'expenses.view', 'expenses.edit', 'payments.view', 'payments.edit',
     'ledgers.view', 'sales.view', 'purchases.view', 'suppliers.view', 'customers.view', 'employees.view'],
 };
 
 // page -> permission needed to open it. 'admin' means administrators only.
 export const ROUTE_PERM: Record<string, string> = {
-  '/': 'pos.view', '/sales': 'sales.view', '/returns': 'returns.view', '/products': 'products.view',
+  '/': 'dashboard.view', '/pos': 'pos.view', '/sales': 'sales.view', '/returns': 'returns.view', '/products': 'products.view',
   '/purchases': 'purchases.view', '/purchase-returns': 'purchases.view', '/suppliers': 'suppliers.view', '/customers': 'customers.view',
   '/employees': 'employees.view', '/expenses': 'expenses.view', '/payments': 'payments.view',
   '/accounts': 'accounts.view', '/ledgers': 'ledgers.view', '/settings': 'settings.view', '/users': 'admin',

@@ -3,7 +3,8 @@ export interface NavGroup { label: string; items: NavItem[] }
 
 /** Main menu. A group with one page is shown as a plain link. */
 export const NAV_GROUPS: NavGroup[] = [
-  { label: 'POS', items: [{ href: '/', key: 'Alt+P', label: 'POS', hint: 'Make a sale' }] },
+  { label: 'Dashboard', items: [{ href: '/', key: 'Alt+H', label: 'Dashboard', hint: 'Today, weekly and monthly sales, top products' }] },
+  { label: 'POS', items: [{ href: '/pos/', key: 'Alt+P', label: 'POS', hint: 'Make a sale' }] },
   { label: 'Selling', items: [
     { href: '/sales/', key: 'Alt+S', label: 'Sales', hint: 'Past invoices, reprint, cancel' },
     { href: '/returns/', key: 'Alt+R', label: 'Returns', hint: 'Take items back from an invoice' },

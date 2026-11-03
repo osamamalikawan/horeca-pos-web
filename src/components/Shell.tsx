@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { useEffect } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import Header from './Header';
 import { useProfile } from './ProfileProvider';
 import { permForPath } from '@/lib/permissions';
@@ -16,6 +17,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const items = [...NAV_GROUPS.flatMap((g) => g.items), ...ACCOUNT_ITEMS].filter((n) => allowedHref(n.href));
   const need = permForPath(path);
   const allowed = !need || can(need);
+  const router = useRouter();
+  // people without the dashboard land on the first page they can open (usually the POS)
+  useEffect(() => { if (!allowed && path === '/' && items[0]) router.replace(items[0].href); });   // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
