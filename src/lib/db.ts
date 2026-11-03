@@ -1,13 +1,13 @@
 import Dexie, { type Table } from 'dexie';
 import type {
-  Account, Employee, EmployeeEntry, Expense, Invoice, InvoiceItem, Party, Product, Purchase, PurchaseItem, SaleReturn, SaleReturnItem,
+  Account, Employee, EmployeeEntry, Expense, Invoice, InvoiceItem, Party, Product, Purchase, PurchaseItem, PurchaseReturn, PurchaseReturnItem, SaleReturn, SaleReturnItem,
   StockMovement, Transaction,
 } from './types';
 
 // Order matters: parents before children (foreign keys on the server).
 export const TABLES = [
   'accounts', 'parties', 'products', 'invoices', 'invoice_items',
-  'sale_returns', 'sale_return_items', 'purchases', 'purchase_items', 'employees', 'employee_entries',
+  'sale_returns', 'sale_return_items', 'purchases', 'purchase_items', 'employees', 'employee_entries', 'purchase_returns', 'purchase_return_items',
   'stock_movements', 'expenses', 'transactions',
 ] as const;
 export type TableName = (typeof TABLES)[number];
@@ -30,6 +30,8 @@ class PosDB extends Dexie {
   declare purchase_items: Table<PurchaseItem, string>;
   declare employees: Table<Employee, string>;
   declare employee_entries: Table<EmployeeEntry, string>;
+  declare purchase_returns: Table<PurchaseReturn, string>;
+  declare purchase_return_items: Table<PurchaseReturnItem, string>;
   declare outbox: Table<OutboxRow, number>;
   declare meta: Table<MetaRow, string>;
 
@@ -60,6 +62,11 @@ class PosDB extends Dexie {
       employees: 'id, name',
       employee_entries: 'id, employee_id, created_at',
     });
+    // v4 adds purchase returns
+    this.version(4).stores({
+      purchase_returns: 'id, return_no, purchase_id, created_at',
+      purchase_return_items: 'id, return_id, purchase_item_id',
+    });
   }
 }
 
@@ -85,7 +92,7 @@ export async function putRow(table: TableName, row: Record<string, any>) {
  */
 export async function moveStock(
   product_id: string, qty_change: number,
-  reason: 'sale' | 'purchase' | 'adjustment' | 'opening' | 'return' | 'cancel', ref_id?: string,
+  reason: 'sale' | 'purchase' | 'adjustment' | 'opening' | 'return' | 'cancel' | 'purchase_return', ref_id?: string,
 ) {
   const now = new Date().toISOString();
   await putRow('stock_movements', {

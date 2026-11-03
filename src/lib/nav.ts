@@ -11,6 +11,7 @@ export const NAV_GROUPS: NavGroup[] = [
   { label: 'Stock', items: [
     { href: '/products/', label: 'Products', hint: 'Items, prices, barcodes, stock' },
     { href: '/purchases/', label: 'Purchases', hint: 'Restock from a supplier' },
+    { href: '/purchase-returns/', label: 'Purchase returns', hint: 'Send items back to a supplier' },
     { href: '/suppliers/', label: 'Suppliers', hint: 'Who you buy from, what you owe' },
   ] },
   { label: 'People', items: [

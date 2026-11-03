@@ -12,7 +12,7 @@ import { sortAccounts } from '@/components/AccountPicker';
 
 const TYPE_LABEL: Record<string, string> = {
   sale: 'Sale', expense: 'Expense', receipt: 'Payment received', payment: 'Payment made',
-  purchase: 'Purchase', refund: 'Sale return refund', salary: 'Salary paid', advance: 'Employee advance',
+  purchase: 'Purchase', refund: 'Sale return refund', purchase_refund: 'Purchase return refund', salary: 'Salary paid', advance: 'Employee advance',
 };
 
 export default function AccountsPage() {

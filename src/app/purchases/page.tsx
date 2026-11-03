@@ -8,6 +8,7 @@ import { inPeriod, shortDate, type Period } from '@/lib/period';
 import type { Party, Product } from '@/lib/types';
 import Drawer from '@/components/Drawer';
 import { useProfile } from '@/components/ProfileProvider';
+import Link from 'next/link';
 import PeriodTabs from '@/components/PeriodTabs';
 import NumInput from '@/components/NumInput';
 import AccountPicker, { defaultAccountId } from '@/components/AccountPicker';
@@ -107,7 +108,7 @@ export default function PurchasesPage() {
   }
   const patch = (i: number, p: Partial<PLine>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...p } : l)));
 
-  const total = round2(lines.reduce((s, l) => s + l.qty * l.cost, 0));
+  const total = round2(lines.reduce((s, l) => s + round2(l.qty * l.cost), 0));
   const units = lines.reduce((s, l) => s + l.qty, 0);
   const paid = Math.min(paidRaw === '' ? total : Math.max(Number(paidRaw) || 0, 0), total);
   const due = round2(total - paid);
@@ -289,7 +290,8 @@ export default function PurchasesPage() {
       </Drawer>
 
       {/* existing purchase */}
-      <Drawer open={!!viewId} onClose={() => setViewId(null)} wide title={viewed ? `Purchase ${viewed.p.purchase_no}` : 'Purchase'}>
+      <Drawer open={!!viewId} onClose={() => setViewId(null)} wide title={viewed ? `Purchase ${viewed.p.purchase_no}` : 'Purchase'}
+        footer={viewed && canEdit ? (<><span /><Link className="btn" href={`/purchase-returns/?purchase=${viewed.p.id}`} style={{ display: 'inline-flex', alignItems: 'center' }}>Send items back</Link></>) : undefined}>
         {viewed && (
           <>
             <dl className="kv" style={{ textAlign: 'left' }}>

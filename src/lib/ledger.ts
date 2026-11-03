@@ -20,15 +20,17 @@ export async function customerBalances() {
 
 /** What we still owe each supplier: opening balance, unpaid purchases, minus later payments. */
 export async function supplierBalances() {
-  const [parties, pur, pay] = await Promise.all([
+  const [parties, pur, pay, rets] = await Promise.all([
     db.parties.filter((p) => p.type === 'supplier' && !p.deleted_at).toArray(),
     db.purchases.filter((p) => !p.deleted_at && !!p.party_id).toArray(),
     db.transactions.filter((t) => !t.deleted_at && t.type === 'payment' && !!t.party_id).toArray(),
+    db.purchase_returns.filter((r) => !r.deleted_at && !!r.party_id).toArray(),
   ]);
   const b: Record<string, number> = {};
   parties.forEach((p) => { if (nz(p.opening_balance)) b[p.id] = nz(p.opening_balance); });
   pur.forEach((p) => { b[p.party_id!] = (b[p.party_id!] ?? 0) + nz(p.total) - nz(p.paid); });
   pay.forEach((t) => { b[t.party_id!] = (b[t.party_id!] ?? 0) - nz(t.amount); });
+  rets.forEach((r) => { b[r.party_id!] = (b[r.party_id!] ?? 0) - nz(r.credit_adjust); });
   return b;
 }
 

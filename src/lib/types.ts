@@ -29,7 +29,7 @@ export interface InvoiceItem {
 }
 export interface StockMovement {
   id: string; product_id: string; qty_change: number;
-  reason: 'sale' | 'purchase' | 'adjustment' | 'opening' | 'return' | 'cancel'; ref_id: string | null;
+  reason: 'sale' | 'purchase' | 'adjustment' | 'opening' | 'return' | 'cancel' | 'purchase_return'; ref_id: string | null;
   created_at: string; updated_at: string;
 }
 export interface Expense {
@@ -38,7 +38,7 @@ export interface Expense {
 }
 export interface Transaction {
   id: string; account_id: string; direction: 'in' | 'out'; amount: number;
-  type: 'sale' | 'expense' | 'receipt' | 'payment' | 'purchase' | 'refund' | 'salary' | 'advance'; party_id: string | null;
+  type: 'sale' | 'expense' | 'receipt' | 'payment' | 'purchase' | 'refund' | 'salary' | 'advance' | 'purchase_refund'; party_id: string | null;
   ref_id: string | null; note: string | null;
   created_at: string; updated_at: string; deleted_at: string | null;
 }
@@ -72,4 +72,14 @@ export interface EmployeeEntry {
   id: string; employee_id: string; kind: EmployeeEntryKind; amount: number; month: string | null;
   account_id: string | null; note: string | null;
   created_at: string; updated_at: string; deleted_at: string | null;
+}
+
+export interface PurchaseReturn {
+  id: string; return_no: string; purchase_id: string; party_id: string | null;
+  total: number; cash_refund: number; credit_adjust: number; account_id: string | null; note: string | null;
+  created_at: string; updated_at: string; deleted_at: string | null;
+}
+export interface PurchaseReturnItem {
+  id: string; return_id: string; purchase_item_id: string; product_id: string; name: string;
+  qty: number; unit_cost: number; refund: number; updated_at: string;
 }

@@ -12,8 +12,8 @@ export interface Statement {
 
 const nz = (v: unknown) => Number(v ?? 0) || 0;
 const LABELS: Record<PartyKind, { plus: string; minus: string; balance: string }> = {
-  customer: { plus: 'Billed', minus: 'Received', balance: 'Customer owes you' },
-  supplier: { plus: 'Purchased', minus: 'Paid', balance: 'You owe supplier' },
+  customer: { plus: 'Billed', minus: 'Received or returned', balance: 'Customer owes you' },
+  supplier: { plus: 'Purchased', minus: 'Paid or returned', balance: 'You owe supplier' },
   employee: { plus: 'Earned', minus: 'Paid or deducted', balance: 'You owe employee' },
 };
 
@@ -38,13 +38,18 @@ async function customerRows(id: string): Promise<StatementRow[]> {
 }
 
 async function supplierRows(id: string): Promise<StatementRow[]> {
-  const [pur, tx] = await Promise.all([
+  const [pur, tx, rets] = await Promise.all([
     db.purchases.filter((p) => p.party_id === id && !p.deleted_at).toArray(),
     db.transactions.filter((t) => t.party_id === id && !t.deleted_at && (t.type === 'purchase' || t.type === 'payment')).toArray(),
+    db.purchase_returns.filter((r) => r.party_id === id && !r.deleted_at).toArray(),
   ]);
   const rows: StatementRow[] = [];
   pur.forEach((p) => rows.push({ id: p.id, at: p.created_at, ord: p.updated_at, label: 'Purchase', ref: p.purchase_no, note: p.bill_no ? `Bill ${p.bill_no}` : '', plus: nz(p.total), minus: 0 }));
   tx.forEach((t) => rows.push({ id: t.id, at: t.created_at, ord: t.updated_at, label: t.type === 'purchase' ? 'Paid at purchase' : 'Payment', ref: t.type === 'purchase' ? t.note ?? '' : '', note: t.type === 'purchase' ? '' : t.note ?? '', plus: 0, minus: nz(t.amount) }));
+  rets.forEach((r) => {
+    rows.push({ id: r.id, at: r.created_at, ord: r.updated_at, label: 'Purchase return', ref: r.return_no, note: r.note ?? '', plus: 0, minus: nz(r.total) });
+    if (nz(r.cash_refund) > 0) rows.push({ id: r.id + ':refund', at: r.created_at, ord: r.updated_at + '~', label: 'Refund received', ref: r.return_no, note: '', plus: nz(r.cash_refund), minus: 0 });
+  });
   return rows;
 }
 

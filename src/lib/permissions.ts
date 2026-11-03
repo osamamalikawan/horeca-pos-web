@@ -39,7 +39,7 @@ export const PRESETS: Record<string, string[]> = {
 // page -> permission needed to open it. 'admin' means administrators only.
 export const ROUTE_PERM: Record<string, string> = {
   '/': 'pos.view', '/sales': 'sales.view', '/returns': 'returns.view', '/products': 'products.view',
-  '/purchases': 'purchases.view', '/suppliers': 'suppliers.view', '/customers': 'customers.view',
+  '/purchases': 'purchases.view', '/purchase-returns': 'purchases.view', '/suppliers': 'suppliers.view', '/customers': 'customers.view',
   '/employees': 'employees.view', '/expenses': 'expenses.view', '/payments': 'payments.view',
   '/accounts': 'accounts.view', '/ledgers': 'ledgers.view', '/settings': 'settings.view', '/users': 'admin',
 };
