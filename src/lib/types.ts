@@ -56,6 +56,7 @@ export interface Purchase {
   id: string; purchase_no: string; party_id: string | null; bill_no: string | null;
   subtotal: number; total: number; paid: number; account_id: string | null; note: string | null;
   created_at: string; updated_at: string; deleted_at: string | null;
+  cancelled_at?: string | null; cancel_reason?: string | null;
 }
 export interface PurchaseItem {
   id: string; purchase_id: string; product_id: string; name: string;

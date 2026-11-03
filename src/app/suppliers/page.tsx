@@ -19,7 +19,7 @@ export default function SuppliersPage() {
   const data = useLiveQuery(async () => {
     const [suppliers, purchases, pays, accounts] = await Promise.all([
       db.parties.filter((p) => p.type === 'supplier' && !p.deleted_at).toArray(),
-      db.purchases.filter((p) => !p.deleted_at && !!p.party_id).toArray(),
+      db.purchases.filter((p) => !p.deleted_at && !p.cancelled_at && !!p.party_id).toArray(),
       db.transactions.filter((t) => !t.deleted_at && t.type === 'payment' && !!t.party_id).toArray(),
       db.accounts.toArray(),
     ]);

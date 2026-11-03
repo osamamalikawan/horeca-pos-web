@@ -22,7 +22,7 @@ export async function customerBalances() {
 export async function supplierBalances() {
   const [parties, pur, pay, rets] = await Promise.all([
     db.parties.filter((p) => p.type === 'supplier' && !p.deleted_at).toArray(),
-    db.purchases.filter((p) => !p.deleted_at && !!p.party_id).toArray(),
+    db.purchases.filter((p) => !p.deleted_at && !p.cancelled_at && !!p.party_id).toArray(),
     db.transactions.filter((t) => !t.deleted_at && t.type === 'payment' && !!t.party_id).toArray(),
     db.purchase_returns.filter((r) => !r.deleted_at && !!r.party_id).toArray(),
   ]);

@@ -39,7 +39,7 @@ async function customerRows(id: string): Promise<StatementRow[]> {
 
 async function supplierRows(id: string): Promise<StatementRow[]> {
   const [pur, tx, rets] = await Promise.all([
-    db.purchases.filter((p) => p.party_id === id && !p.deleted_at).toArray(),
+    db.purchases.filter((p) => p.party_id === id && !p.deleted_at && !p.cancelled_at).toArray(),
     db.transactions.filter((t) => t.party_id === id && !t.deleted_at && (t.type === 'purchase' || t.type === 'payment')).toArray(),
     db.purchase_returns.filter((r) => r.party_id === id && !r.deleted_at).toArray(),
   ]);

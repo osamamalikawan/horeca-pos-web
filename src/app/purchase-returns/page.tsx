@@ -63,6 +63,7 @@ export default function PurchaseReturnsPage() {
     const s = q.trim().toLowerCase();
     if (!s || !data) return [];
     return data.purchases.filter((p) => {
+      if (p.cancelled_at) return false;
       const sup = p.party_id ? party.get(p.party_id) : null;
       return p.purchase_no.toLowerCase().includes(s) || (p.bill_no ?? '').toLowerCase().includes(s)
         || (sup?.name.toLowerCase().includes(s) ?? false) || (sup?.phone ?? '').includes(s);

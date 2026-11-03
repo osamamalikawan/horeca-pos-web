@@ -53,6 +53,7 @@ export async function createPurchaseReturn(a: {
   let result!: PurchaseReturn;
   await db.transaction('rw', db.tables, async () => {
     const b = await loadPurchase(a.purchaseId);
+    if (b?.purchase.cancelled_at) throw new Error('This purchase was cancelled.');
     if (!b) throw new Error('Purchase not found.');
     const picked = a.lines.filter((l) => l.qty > 0).map((l) => {
       const it = b.items.find((x) => x.id === l.itemId);
@@ -92,4 +93,25 @@ export async function createPurchaseReturn(a: {
     }
   });
   return result;
+}
+
+/**
+ * Cancel a purchase invoice: the stock it added is taken back out and the payment made at purchase is voided
+ * (so the supplier balance and your accounts return to how they were). Not allowed once items were sent back.
+ * Cost prices that the purchase updated are not changed back.
+ */
+export async function cancelPurchase(id: string, reason: string) {
+  const now = new Date().toISOString();
+  await db.transaction('rw', db.tables, async () => {
+    const p = await db.purchases.get(id);
+    if (!p) throw new Error('Purchase not found.');
+    if (p.cancelled_at) throw new Error('This purchase is already cancelled.');
+    const rets = await db.purchase_returns.where('purchase_id').equals(id).filter((r) => !r.deleted_at).count();
+    if (rets) throw new Error('Items from this purchase were sent back, so it cannot be cancelled.');
+    await putRow('purchases', { ...p, cancelled_at: now, cancel_reason: reason.trim() || null });
+    const items = await db.purchase_items.where('purchase_id').equals(id).toArray();
+    for (const it of items) await moveStock(it.product_id, -Number(it.qty), 'cancel', id);
+    const txs = await db.transactions.where('ref_id').equals(id).filter((t) => t.type === 'purchase' && !t.deleted_at).toArray();
+    for (const t of txs) await putRow('transactions', { ...t, deleted_at: now });
+  });
 }

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, moveStock, putRow } from '@/lib/db';
 import { money, nextNo, qtyFmt, round2, uid } from '@/lib/util';
+import { cancelPurchase } from '@/lib/purchaseReturns';
 import { beep } from '@/lib/print';
 import { inPeriod, shortDate, type Period } from '@/lib/period';
 import type { Party, Product } from '@/lib/types';
@@ -18,7 +19,8 @@ interface PLine { product_id: string; name: string; qty: number; cost: number }
 
 export default function PurchasesPage() {
   const { settings } = useSettings();
-  const canEdit = useProfile().can('purchases.edit');
+  const { can } = useProfile();
+  const canEdit = can('purchases.edit'), canCancel = can('purchases.cancel');
   const data = useLiveQuery(async () => {
     const [purchases, parties, products, accounts] = await Promise.all([
       db.purchases.filter((p) => !p.deleted_at).toArray(),
@@ -31,6 +33,9 @@ export default function PurchasesPage() {
 
   const [period, setPeriod] = useState<Period>('month');
   const [viewId, setViewId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelErr, setCancelErr] = useState('');
   const viewed = useLiveQuery(async () => {
     if (!viewId) return undefined;
     const p = await db.purchases.get(viewId);
@@ -75,7 +80,13 @@ export default function PurchasesPage() {
     () => (data?.purchases ?? []).filter((p) => inPeriod(p.created_at, period)).sort((a, b) => b.created_at.localeCompare(a.created_at)),
     [data, period],
   );
-  const rowsTotal = round2(rows.reduce((s, p) => s + Number(p.total), 0));
+  const rowsTotal = round2(rows.reduce((s, p) => s + (p.cancelled_at ? 0 : Number(p.total)), 0));
+  const openView = (id: string) => { setViewId(id); setCancelling(false); setCancelReason(''); setCancelErr(''); };
+  async function doCancel() {
+    if (!viewId) return;
+    try { await cancelPurchase(viewId, cancelReason); setCancelling(false); setCancelErr(''); }
+    catch (e: any) { setCancelErr(e?.message ?? String(e)); }
+  }
 
   const productMatches = useMemo(() => {
     const s = pq.trim().toLowerCase();
@@ -178,19 +189,21 @@ export default function PurchasesPage() {
         <div className="empty">No purchases in this period. Choose New purchase to add stock.</div>
       ) : (
         <table>
-          <thead><tr><th>Purchase</th><th>Date</th><th>Supplier</th><th>Bill no</th><th className="right">Total</th><th className="right">Paid</th><th className="right">Due</th></tr></thead>
+          <thead><tr><th>Purchase</th><th>Date</th><th>Supplier</th><th>Bill no</th><th className="right">Total</th><th className="right">Paid</th><th className="right">Due</th><th>Status</th></tr></thead>
           <tbody>
             {rows.map((p) => {
-              const d = round2(Number(p.total) - Number(p.paid));
+              const gone = !!p.cancelled_at;
+              const d = gone ? 0 : round2(Number(p.total) - Number(p.paid));
               return (
-                <tr key={p.id} onClick={() => setViewId(p.id)}>
+                <tr key={p.id} onClick={() => openView(p.id)} style={gone ? { color: 'var(--mute)' } : undefined}>
                   <td className="num">{p.purchase_no}</td>
                   <td className="num mute">{shortDate(p.created_at)}</td>
                   <td>{p.party_id ? supName.get(p.party_id) ?? '' : <span className="mute">No supplier</span>}</td>
                   <td className="mute">{p.bill_no ?? ''}</td>
-                  <td className="right num">{money(p.total)}</td>
-                  <td className="right num">{money(p.paid)}</td>
+                  <td className="right num" style={gone ? { textDecoration: 'line-through' } : undefined}>{money(p.total)}</td>
+                  <td className="right num">{gone ? '' : money(p.paid)}</td>
                   <td className={'right num ' + (d > 0 ? 'warn' : '')}>{d > 0 ? money(d) : ''}</td>
+                  <td className={gone ? 'warn' : 'mute'}>{gone ? 'Cancelled' : ''}</td>
                 </tr>
               );
             })}
@@ -291,12 +304,18 @@ export default function PurchasesPage() {
 
       {/* existing purchase */}
       <Drawer open={!!viewId} onClose={() => setViewId(null)} wide title={viewed ? `Purchase ${viewed.p.purchase_no}` : 'Purchase'}
-        footer={viewed && canEdit ? (<><span /><Link className="btn" href={`/purchase-returns/?purchase=${viewed.p.id}`} style={{ display: 'inline-flex', alignItems: 'center' }}>Send items back</Link></>) : undefined}>
+        footer={viewed && !viewed.p.cancelled_at && (canEdit || canCancel) ? (
+          <>
+            {canCancel && !cancelling ? <button className="btn danger" onClick={() => { setCancelling(true); setCancelErr(''); }}>Cancel purchase</button> : <span />}
+            {canEdit && <Link className="btn" href={`/purchase-returns/?purchase=${viewed.p.id}`} style={{ display: 'inline-flex', alignItems: 'center' }}>Send items back</Link>}
+          </>
+        ) : undefined}>
         {viewed && (
           <>
             <dl className="kv" style={{ textAlign: 'left' }}>
               <dt>Date</dt><dd className="num">{new Date(viewed.p.created_at).toLocaleString()}</dd>
               <dt>Supplier</dt><dd>{viewed.p.party_id ? supName.get(viewed.p.party_id) ?? '' : 'None'}</dd>
+              {viewed.p.cancelled_at && (<><dt>Status</dt><dd className="warn">Cancelled{viewed.p.cancel_reason ? `, ${viewed.p.cancel_reason}` : ''}</dd></>)}
               {viewed.p.bill_no && (<><dt>Supplier bill</dt><dd>{viewed.p.bill_no}</dd></>)}
               {viewed.p.note && (<><dt>Note</dt><dd>{viewed.p.note}</dd></>)}
             </dl>
@@ -312,8 +331,20 @@ export default function PurchasesPage() {
               <dt>Total products</dt><dd className="num">{viewed.items.length}</dd>
               <dt><b>Total</b></dt><dd className="num"><b>{money(viewed.p.total)}</b></dd>
               <dt>Paid</dt><dd className="num">{money(viewed.p.paid)}</dd>
-              {Number(viewed.p.total) - Number(viewed.p.paid) > 0 && (<><dt>Balance owed</dt><dd className="num warn">{money(round2(Number(viewed.p.total) - Number(viewed.p.paid)))}</dd></>)}
+              {!viewed.p.cancelled_at && Number(viewed.p.total) - Number(viewed.p.paid) > 0 && (<><dt>Balance owed</dt><dd className="num warn">{money(round2(Number(viewed.p.total) - Number(viewed.p.paid)))}</dd></>)}
             </dl>
+            {cancelling && !viewed.p.cancelled_at && (
+              <div className="notice" style={{ display: 'grid', gap: 8 }}>
+                <b>Cancel this purchase?</b>
+                <span>The stock it added is taken back out{Number(viewed.p.paid) > 0 ? ` and the ${money(viewed.p.paid)} paid is put back into your accounts` : ''}{viewed.p.party_id && Number(viewed.p.total) - Number(viewed.p.paid) > 0 ? '. The balance you owed the supplier for it is removed' : ''}. Cost prices it updated are not changed back. This cannot be undone.</span>
+                <input placeholder="Reason (optional)" value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} autoFocus />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn danger" onClick={doCancel}>Cancel this purchase</button>
+                  <button className="btn quiet" onClick={() => setCancelling(false)}>Keep purchase</button>
+                </div>
+                {cancelErr && <span className="err">{cancelErr}</span>}
+              </div>
+            )}
           </>
         )}
       </Drawer>

@@ -9,7 +9,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'returns', label: 'Returns', actions: [{ key: 'view', label: 'Open' }, { key: 'edit', label: 'Make returns' }] },
   { key: 'products', label: 'Products', actions: [
     { key: 'view', label: 'Open' }, { key: 'edit', label: 'Add and edit' }, { key: 'cost', label: 'See cost prices' } ] },
-  { key: 'purchases', label: 'Purchases', actions: [{ key: 'view', label: 'Open' }, { key: 'edit', label: 'Add and edit' }] },
+  { key: 'purchases', label: 'Purchases', actions: [{ key: 'view', label: 'Open' }, { key: 'edit', label: 'Add and edit' }, { key: 'cancel', label: 'Cancel purchases' }] },
   { key: 'suppliers', label: 'Suppliers', actions: [{ key: 'view', label: 'Open' }, { key: 'edit', label: 'Add and edit' }] },
   { key: 'customers', label: 'Customers', actions: [{ key: 'view', label: 'Open' }, { key: 'edit', label: 'Add and edit' }] },
   { key: 'employees', label: 'Employees', actions: [{ key: 'view', label: 'Open' }, { key: 'edit', label: 'Add, edit and pay' }] },
