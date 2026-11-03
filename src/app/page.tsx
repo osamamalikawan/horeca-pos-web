@@ -12,11 +12,9 @@ import { customerBalances } from '@/lib/ledger';
 import PrintPortal from '@/components/PrintPortal';
 import ReceiptView, { type Receipt } from '@/components/ReceiptView';
 import { useSettings } from '@/components/SettingsProvider';
+import { usePosDrafts, MAX_DRAFTS, type Line, type Split } from '@/components/PosDrafts';
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
-
-interface Line { product_id: string; name: string; unit_price: number; qty: number; disc: string }
-interface Split { kind: Kind; amount: string }
 
 const KINDS: { kind: Kind; label: string }[] = [
   { kind: 'cash', label: 'Cash' }, { kind: 'bank', label: 'Bank' },
@@ -35,12 +33,15 @@ export default function PosPage() {
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('');
   const [msg, setMsg] = useState('');
-  const [cart, setCart] = useState<Line[]>([]);
-  const [billDisc, setBillDisc] = useState('');
-  const [customer, setCustomer] = useState<Party | null>(null);
-  const [cq, setCq] = useState('');
+  // The open invoices live in PosDrafts so they stay when you visit another page.
+  const { drafts, active, patchActive, switchTo, newDraft, closeDraft, finishDraft } = usePosDrafts();
+  const { cart, billDisc, customer, cq, splits } = active;
+  const setCart = (f: Line[] | ((c: Line[]) => Line[])) => patchActive((d) => ({ cart: typeof f === 'function' ? f(d.cart) : f }));
+  const setBillDisc = (v: string) => patchActive(() => ({ billDisc: v }));
+  const setCustomer = (v: Party | null) => patchActive(() => ({ customer: v }));
+  const setCq = (v: string) => patchActive(() => ({ cq: v }));
+  const setSplits = (f: Split[] | ((s: Split[]) => Split[])) => patchActive((d) => ({ splits: typeof f === 'function' ? f(d.splits) : f }));
   const [newCust, setNewCust] = useState<{ name: string; phone: string } | null>(null);
-  const [splits, setSplits] = useState<Split[]>([{ kind: 'cash', amount: '' }]);
   const [busy, setBusy] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [printAfter, setPrintAfter] = useState(false);
@@ -58,6 +59,8 @@ export default function PosPage() {
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [sc.focusAnywhere]);
+
+  useEffect(() => { setMsg(''); searchRef.current?.focus(); }, [active.id]);
 
   const byId = useMemo(() => new Map((products ?? []).map((p) => [p.id, p])), [products]);
 
@@ -187,6 +190,7 @@ export default function PosPage() {
     const used = splits.map((s, i) => ({ s, i, acc: accountOf(s.kind), amt: pay.net[i] }));
     if (used.some((u) => u.amt > 0 && !u.acc)) { setMsg('That payment account is not loaded yet. Press Sync now once while online.'); return; }
     setBusy(true); setMsg('');
+    const draftId = active.id;
     try {
       const id = uid();
       const now = new Date().toISOString();
@@ -227,7 +231,7 @@ export default function PosPage() {
         change: pay.change, balance: pay.owed,
       });
       setPrintAfter(print || settings.receipt.autoPrint);
-      setCart([]); setBillDisc(''); setSplits([{ kind: 'cash', amount: '' }]); setCustomer(null); setCq('');
+      finishDraft(draftId);   // this invoice is done: close its tab (or reset it if it is the only one)
     } finally { setBusy(false); }
   }
 
@@ -249,7 +253,7 @@ export default function PosPage() {
     return () => window.removeEventListener('keydown', k);
   }, []);
 
-  function clearInvoice() { setCart([]); setBillDisc(''); setSplits([{ kind: 'cash', amount: '' }]); setCustomer(null); setCq(''); setMsg(''); searchRef.current?.focus(); }
+  function clearInvoice() { patchActive(() => ({ cart: [], billDisc: '', splits: [{ kind: 'cash', amount: '' }], customer: null, cq: '' })); setMsg(''); searchRef.current?.focus(); }
   function closeReceipt() { setReceipt(null); setPrintAfter(false); searchRef.current?.focus(); }
   const noAccounts = accounts && accounts.length === 0;
   const ownes = customer ? owed?.[customer.id] ?? 0 : 0;
@@ -262,7 +266,7 @@ export default function PosPage() {
         <div className="pos-bar">
           <input ref={searchRef} className="pos-search" value={q} autoFocus placeholder="Scan a barcode or search products"
             aria-label="Scan or search" onChange={(e) => { setQ(e.target.value); setMsg(''); }} onKeyDown={onSearchKey} />
-          <div className="pos-hint">{msg ? <span className="err">{msg}</span> : <span className="mute">Scan or type, then Enter. F2 returns here.</span>}</div>
+          <div className="pos-hint">{msg ? <span className="err">{msg}</span> : <span className="mute">Scan or type, then Enter. F2 returns here. Alt+N new invoice, Alt+1 to 9 switch, Alt+K jump to a page.</span>}</div>
           {categories.length > 0 && (
             <div className="chips" role="group" aria-label="Category">
               <button className={'chipbtn' + (cat === '' ? ' on' : '')} onClick={() => setCat('')}>All</button>
@@ -294,9 +298,26 @@ export default function PosPage() {
 
       {/* right: the invoice */}
       <aside className="invoice">
+        <div className="inv-tabs" role="tablist" aria-label="Open invoices">
+          {drafts.map((d, i) => {
+            const total = d.cart.reduce((s, l) => s + l.qty * l.unit_price, 0);
+            return (
+              <div key={d.id} role="tab" aria-selected={d.id === active.id} tabIndex={0} className={'inv-tab' + (d.id === active.id ? ' on' : '')}
+                title={`Alt+${i + 1}`} onClick={() => switchTo(d.id)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTo(d.id); } }}>
+                <span>#{d.n}{d.customer ? ` ${d.customer.name.split(' ')[0]}` : ''}{d.cart.length ? ` · ${money(total)}` : ''}</span>
+                {drafts.length > 1 && (
+                  <button className="x" aria-label={`Close invoice ${d.n}`} tabIndex={-1}
+                    onClick={(e) => { e.stopPropagation(); if (!d.cart.length || window.confirm('Close this invoice? Its items will be removed.')) closeDraft(d.id); }}>×</button>
+                )}
+              </div>
+            );
+          })}
+          {drafts.length < MAX_DRAFTS && <button className="inv-tab add" onClick={() => newDraft()} title="Alt+N" aria-label="New invoice">+</button>}
+        </div>
         <div className="inv-head">
           <div className="inv-title">
-            <h2>Invoice</h2>
+            <h2>Invoice #{active.n}</h2>
             <span className="pill2 num">{cart.length} {cart.length === 1 ? 'product' : 'products'}, {qtyFmt(calc.units)} {calc.units === 1 ? 'unit' : 'units'}</span>
             {cart.length > 0 && <button className="btn small quiet" onClick={clearInvoice}>Clear</button>}
           </div>

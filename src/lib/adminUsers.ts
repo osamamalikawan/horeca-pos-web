@@ -18,7 +18,9 @@ export async function callAdmin(action: 'create' | 'update' | 'set_password' | '
       throw new Error('The user service did not accept your sign-in. Redeploy admin-users with "Verify JWT" turned off (the function checks the sign-in itself), then try again.');
     }
     if ((error as any).name === 'FunctionsFetchError' || /failed to send/i.test(error.message)) {
-      throw new Error('Could not reach the user service. Check the internet connection. If it keeps happening the admin-users function may not be deployed.');
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('You are offline. Connect to the internet and try again.');
+      // Online but no answer: Supabase answers a missing function (and a blocked CORS check) without CORS headers, so the browser reports it as a network failure.
+      throw new Error('The user service did not answer. In Supabase open Edge Functions: admin-users must be deployed with the latest index.ts from the repo (steps: supabase/functions/admin-users/README.md). Then try again.');
     }
     throw new Error(body?.message || error.message);
   }

@@ -5,6 +5,7 @@ import ProfileProvider from './ProfileProvider';
 import SyncProvider from './SyncProvider';
 import UpdateProvider from './UpdateProvider';
 import Shell from './Shell';
+import PosDraftsProvider from './PosDrafts';
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   return (
@@ -13,7 +14,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
         <ProfileProvider>
           <SyncProvider>
             <UpdateProvider>
-              <Shell>{children}</Shell>
+              <PosDraftsProvider><Shell>{children}</Shell></PosDraftsProvider>
             </UpdateProvider>
           </SyncProvider>
         </ProfileProvider>

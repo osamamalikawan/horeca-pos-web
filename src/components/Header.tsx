@@ -53,7 +53,7 @@ export default function Header() {
   const dark = typeof window !== 'undefined' && document.documentElement.dataset.theme === 'dark';
   const link = (i: NavItem, extra = '') => (
     <Link key={i.href} href={i.href} role="menuitem" className={'menuitem ' + (sameRoute(path, i.href) ? 'cur ' : '') + extra}>
-      <span>{i.label}</span><span className="hint">{i.hint}</span>
+      <span className="mi-top"><span>{i.label}</span>{i.key && <span className="kbd">{i.key}</span>}</span><span className="hint">{i.hint}</span>
     </Link>
   );
 

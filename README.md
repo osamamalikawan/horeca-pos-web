@@ -27,3 +27,8 @@ Push to GitHub, import in Vercel, add the two env vars. `npm run build` outputs 
    Everyone who can already sign in becomes an administrator, so nobody is locked out.
 2. Deploy the user-management function: see `supabase/functions/admin-users/README.md`.
 3. Open Users (administrators only) to add people and choose what each can open and do.
+
+## Shortcut keys
+- POS: `F2` scan box, `Ctrl+Enter` complete sale, `Ctrl+Shift+Enter` complete and print.
+- Several invoices at once: `Alt+N` new invoice, `Alt+1` to `Alt+9` switch, `Alt+W` close. They stay open when you visit other pages.
+- Pages: `Alt+` the letter shown beside each menu item (for example `Alt+S` Sales, `Alt+I` Products). `Alt+K` or `Ctrl+K` opens a jump list.

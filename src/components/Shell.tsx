@@ -6,6 +6,7 @@ import { useProfile } from './ProfileProvider';
 import { permForPath } from '@/lib/permissions';
 import { ACCOUNT_ITEMS, NAV_GROUPS } from '@/lib/nav';
 import SettingsSync from './SettingsSync';
+import GlobalShortcuts from './GlobalShortcuts';
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
@@ -19,6 +20,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <SettingsSync />
+      <GlobalShortcuts />
       <Header />
       <main className="page">
         {allowed ? children : (

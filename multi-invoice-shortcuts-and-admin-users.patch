@@ -1,0 +1,515 @@
+diff --git a/README.md b/README.md
+index 14a4d32..04530f3 100644
+--- a/README.md
++++ b/README.md
+@@ -27,3 +27,8 @@ Push to GitHub, import in Vercel, add the two env vars. `npm run build` outputs
+    Everyone who can already sign in becomes an administrator, so nobody is locked out.
+ 2. Deploy the user-management function: see `supabase/functions/admin-users/README.md`.
+ 3. Open Users (administrators only) to add people and choose what each can open and do.
++
++## Shortcut keys
++- POS: `F2` scan box, `Ctrl+Enter` complete sale, `Ctrl+Shift+Enter` complete and print.
++- Several invoices at once: `Alt+N` new invoice, `Alt+1` to `Alt+9` switch, `Alt+W` close. They stay open when you visit other pages.
++- Pages: `Alt+` the letter shown beside each menu item (for example `Alt+S` Sales, `Alt+I` Products). `Alt+K` or `Ctrl+K` opens a jump list.
+diff --git a/src/app/globals.css b/src/app/globals.css
+index 05a1230..e40431d 100644
+--- a/src/app/globals.css
++++ b/src/app/globals.css
+@@ -250,7 +250,7 @@ tr.hl td:first-child { box-shadow: inset 3px 0 0 var(--ink); }
+   border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 12px; font-weight: 700; }
+ 
+ .invoice { border: 1px solid var(--ink); border-radius: 10px; position: sticky; top: 72px; display: grid;
+-  height: calc(100vh - 92px); min-height: 520px; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--paper); }
++  height: calc(100vh - 92px); min-height: 520px; grid-template-rows: auto auto minmax(0, 1fr) auto; background: var(--paper); }
+ .inv-head { padding: 12px 14px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+ .inv-title { display: flex; align-items: center; gap: 8px; }
+ .inv-title h2 { font-size: 16px; }
+@@ -306,3 +306,19 @@ tr.hl td:first-child { box-shadow: inset 3px 0 0 var(--ink); }
+ .pos-go { height: 46px; }
+ .pos-print { height: 36px; }
+ .lines { min-height: 170px; }
++
++/* shortcut hints, jump list and open-invoice tabs */
++.kbd { font-size: 11px; font-weight: 500; color: var(--mute); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; line-height: 18px; white-space: nowrap; }
++.mi-top { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
++.palette { position: fixed; top: 14vh; left: 50%; transform: translateX(-50%); width: min(560px, calc(100vw - 24px)); z-index: 31;
++  background: var(--paper); border: 1px solid var(--ink); border-radius: 10px; display: grid; overflow: hidden; }
++.palette > input { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; height: 46px; padding: 0 14px; }
++.plist { max-height: 50vh; overflow: auto; display: grid; }
++.prow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 14px; border: 0; background: none; text-align: left; cursor: pointer; }
++.prow.on { background: var(--soft); box-shadow: inset 3px 0 0 var(--ink); }
++.inv-tabs { display: flex; gap: 4px; padding: 8px 10px 0; overflow-x: auto; border-bottom: 1px solid var(--line); }
++.inv-tab { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 4px 0 10px; border: 1px solid var(--line); border-bottom: 0;
++  border-radius: 6px 6px 0 0; background: var(--paper); cursor: pointer; font-size: 13px; white-space: nowrap; }
++.inv-tab.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
++.inv-tab .x { color: inherit; }
++.inv-tab.add { padding: 0 10px; }
+diff --git a/src/app/page.tsx b/src/app/page.tsx
+index 4a7eade..1ac53b8 100644
+--- a/src/app/page.tsx
++++ b/src/app/page.tsx
+@@ -12,12 +12,10 @@ import { customerBalances } from '@/lib/ledger';
+ import PrintPortal from '@/components/PrintPortal';
+ import ReceiptView, { type Receipt } from '@/components/ReceiptView';
+ import { useSettings } from '@/components/SettingsProvider';
++import { usePosDrafts, MAX_DRAFTS, type Line, type Split } from '@/components/PosDrafts';
+ 
+ const round3 = (n: number) => Math.round(n * 1000) / 1000;
+ 
+-interface Line { product_id: string; name: string; unit_price: number; qty: number; disc: string }
+-interface Split { kind: Kind; amount: string }
+-
+ const KINDS: { kind: Kind; label: string }[] = [
+   { kind: 'cash', label: 'Cash' }, { kind: 'bank', label: 'Bank' },
+   { kind: 'easypaisa', label: 'Easypaisa' }, { kind: 'jazzcash', label: 'JazzCash' },
+@@ -35,12 +33,15 @@ export default function PosPage() {
+   const [q, setQ] = useState('');
+   const [cat, setCat] = useState('');
+   const [msg, setMsg] = useState('');
+-  const [cart, setCart] = useState<Line[]>([]);
+-  const [billDisc, setBillDisc] = useState('');
+-  const [customer, setCustomer] = useState<Party | null>(null);
+-  const [cq, setCq] = useState('');
++  // The open invoices live in PosDrafts so they stay when you visit another page.
++  const { drafts, active, patchActive, switchTo, newDraft, closeDraft, finishDraft } = usePosDrafts();
++  const { cart, billDisc, customer, cq, splits } = active;
++  const setCart = (f: Line[] | ((c: Line[]) => Line[])) => patchActive((d) => ({ cart: typeof f === 'function' ? f(d.cart) : f }));
++  const setBillDisc = (v: string) => patchActive(() => ({ billDisc: v }));
++  const setCustomer = (v: Party | null) => patchActive(() => ({ customer: v }));
++  const setCq = (v: string) => patchActive(() => ({ cq: v }));
++  const setSplits = (f: Split[] | ((s: Split[]) => Split[])) => patchActive((d) => ({ splits: typeof f === 'function' ? f(d.splits) : f }));
+   const [newCust, setNewCust] = useState<{ name: string; phone: string } | null>(null);
+-  const [splits, setSplits] = useState<Split[]>([{ kind: 'cash', amount: '' }]);
+   const [busy, setBusy] = useState(false);
+   const [receipt, setReceipt] = useState<Receipt | null>(null);
+   const [printAfter, setPrintAfter] = useState(false);
+@@ -59,6 +60,8 @@ export default function PosPage() {
+     return () => window.removeEventListener('keydown', k);
+   }, [sc.focusAnywhere]);
+ 
++  useEffect(() => { setMsg(''); searchRef.current?.focus(); }, [active.id]);
++
+   const byId = useMemo(() => new Map((products ?? []).map((p) => [p.id, p])), [products]);
+ 
+   const categories = useMemo(() => {
+@@ -187,6 +190,7 @@ export default function PosPage() {
+     const used = splits.map((s, i) => ({ s, i, acc: accountOf(s.kind), amt: pay.net[i] }));
+     if (used.some((u) => u.amt > 0 && !u.acc)) { setMsg('That payment account is not loaded yet. Press Sync now once while online.'); return; }
+     setBusy(true); setMsg('');
++    const draftId = active.id;
+     try {
+       const id = uid();
+       const now = new Date().toISOString();
+@@ -227,7 +231,7 @@ export default function PosPage() {
+         change: pay.change, balance: pay.owed,
+       });
+       setPrintAfter(print || settings.receipt.autoPrint);
+-      setCart([]); setBillDisc(''); setSplits([{ kind: 'cash', amount: '' }]); setCustomer(null); setCq('');
++      finishDraft(draftId);   // this invoice is done: close its tab (or reset it if it is the only one)
+     } finally { setBusy(false); }
+   }
+ 
+@@ -249,7 +253,7 @@ export default function PosPage() {
+     return () => window.removeEventListener('keydown', k);
+   }, []);
+ 
+-  function clearInvoice() { setCart([]); setBillDisc(''); setSplits([{ kind: 'cash', amount: '' }]); setCustomer(null); setCq(''); setMsg(''); searchRef.current?.focus(); }
++  function clearInvoice() { patchActive(() => ({ cart: [], billDisc: '', splits: [{ kind: 'cash', amount: '' }], customer: null, cq: '' })); setMsg(''); searchRef.current?.focus(); }
+   function closeReceipt() { setReceipt(null); setPrintAfter(false); searchRef.current?.focus(); }
+   const noAccounts = accounts && accounts.length === 0;
+   const ownes = customer ? owed?.[customer.id] ?? 0 : 0;
+@@ -262,7 +266,7 @@ export default function PosPage() {
+         <div className="pos-bar">
+           <input ref={searchRef} className="pos-search" value={q} autoFocus placeholder="Scan a barcode or search products"
+             aria-label="Scan or search" onChange={(e) => { setQ(e.target.value); setMsg(''); }} onKeyDown={onSearchKey} />
+-          <div className="pos-hint">{msg ? <span className="err">{msg}</span> : <span className="mute">Scan or type, then Enter. F2 returns here.</span>}</div>
++          <div className="pos-hint">{msg ? <span className="err">{msg}</span> : <span className="mute">Scan or type, then Enter. F2 returns here. Alt+N new invoice, Alt+1 to 9 switch, Alt+K jump to a page.</span>}</div>
+           {categories.length > 0 && (
+             <div className="chips" role="group" aria-label="Category">
+               <button className={'chipbtn' + (cat === '' ? ' on' : '')} onClick={() => setCat('')}>All</button>
+@@ -294,9 +298,26 @@ export default function PosPage() {
+ 
+       {/* right: the invoice */}
+       <aside className="invoice">
++        <div className="inv-tabs" role="tablist" aria-label="Open invoices">
++          {drafts.map((d, i) => {
++            const total = d.cart.reduce((s, l) => s + l.qty * l.unit_price, 0);
++            return (
++              <div key={d.id} role="tab" aria-selected={d.id === active.id} tabIndex={0} className={'inv-tab' + (d.id === active.id ? ' on' : '')}
++                title={`Alt+${i + 1}`} onClick={() => switchTo(d.id)}
++                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTo(d.id); } }}>
++                <span>#{d.n}{d.customer ? ` ${d.customer.name.split(' ')[0]}` : ''}{d.cart.length ? ` · ${money(total)}` : ''}</span>
++                {drafts.length > 1 && (
++                  <button className="x" aria-label={`Close invoice ${d.n}`} tabIndex={-1}
++                    onClick={(e) => { e.stopPropagation(); if (!d.cart.length || window.confirm('Close this invoice? Its items will be removed.')) closeDraft(d.id); }}>×</button>
++                )}
++              </div>
++            );
++          })}
++          {drafts.length < MAX_DRAFTS && <button className="inv-tab add" onClick={() => newDraft()} title="Alt+N" aria-label="New invoice">+</button>}
++        </div>
+         <div className="inv-head">
+           <div className="inv-title">
+-            <h2>Invoice</h2>
++            <h2>Invoice #{active.n}</h2>
+             <span className="pill2 num">{cart.length} {cart.length === 1 ? 'product' : 'products'}, {qtyFmt(calc.units)} {calc.units === 1 ? 'unit' : 'units'}</span>
+             {cart.length > 0 && <button className="btn small quiet" onClick={clearInvoice}>Clear</button>}
+           </div>
+diff --git a/src/components/GlobalShortcuts.tsx b/src/components/GlobalShortcuts.tsx
+new file mode 100644
+index 0000000..c330849
+--- /dev/null
++++ b/src/components/GlobalShortcuts.tsx
+@@ -0,0 +1,105 @@
++'use client';
++import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
++import { useRouter } from 'next/navigation';
++import { useProfile } from './ProfileProvider';
++import { usePosDrafts, MAX_DRAFTS } from './PosDrafts';
++import { permForPath } from '@/lib/permissions';
++import { ACCOUNT_ITEMS, NAV_GROUPS } from '@/lib/nav';
++import { money } from '@/lib/util';
++
++/**
++ * Keys that work on every page:
++ *   Alt+1..9  open that POS invoice      Alt+N  new invoice      Alt+W  close this invoice
++ *   Alt+<letter>  open a page (shown next to each menu item)     Alt+K or Ctrl+K  jump list
++ */
++export default function GlobalShortcuts() {
++  const router = useRouter();
++  const { can } = useProfile();
++  const { drafts, active, switchTo, newDraft, closeDraft } = usePosDrafts();
++  const [open, setOpen] = useState(false);
++  const [q, setQ] = useState('');
++  const [sel, setSel] = useState(0);
++  const inputRef = useRef<HTMLInputElement>(null);
++
++  const pages = useMemo(
++    () => [...NAV_GROUPS.flatMap((g) => g.items), ...ACCOUNT_ITEMS].filter((n) => { const need = permForPath(n.href); return !need || can(need); }),
++    [can],
++  );
++  const canPos = pages.some((p) => p.href === '/');
++  const goPos = useCallback(() => { if (canPos) router.push('/'); }, [canPos, router]);
++
++  // always call the newest handlers from one listener
++  const h = useRef({ pages, drafts, active, canPos });
++  h.current = { pages, drafts, active, canPos };
++
++  useEffect(() => {
++    const onKey = (e: KeyboardEvent) => {
++      const { pages, drafts, active, canPos } = h.current;
++      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'KeyK') { e.preventDefault(); setQ(''); setSel(0); setOpen((o) => !o); return; }
++      if (!e.altKey || e.ctrlKey || e.metaKey) return;
++      const code = e.code;
++      if (code === 'KeyK') { e.preventDefault(); setQ(''); setSel(0); setOpen((o) => !o); return; }
++      if (!canPos) { /* pages only */ }
++      const digit = /^(Digit|Numpad)([1-9])$/.exec(code);
++      if (digit && canPos) {
++        const i = Number(digit[2]) - 1;
++        if (i < drafts.length) { e.preventDefault(); switchTo(i); goPos(); }
++        return;
++      }
++      if (code === 'KeyN' && canPos) { e.preventDefault(); if (!newDraft()) window.alert(`You can keep ${MAX_DRAFTS} invoices open at once.`); goPos(); return; }
++      if (code === 'KeyW' && canPos) {
++        e.preventDefault();
++        if (active.cart.length && !window.confirm('Close this invoice? Its items will be removed.')) return;
++        closeDraft(active.id);
++        return;
++      }
++      const combo = 'Alt+' + (e.shiftKey ? 'Shift+' : '') + code.replace(/^Key/, '');
++      const page = pages.find((p) => p.key === combo);
++      if (page) { e.preventDefault(); router.push(page.href); }
++    };
++    window.addEventListener('keydown', onKey);
++    return () => window.removeEventListener('keydown', onKey);
++  }, [router, goPos, switchTo, newDraft, closeDraft]);
++
++  useEffect(() => { if (open) requestAnimationFrame(() => inputRef.current?.focus()); }, [open]);
++
++  type Row = { id: string; label: string; hint: string; key?: string; run: () => void };
++  const rows: Row[] = useMemo(() => {
++    const inv: Row[] = canPos ? drafts.map((d, i) => ({
++      id: 'inv' + d.id, label: `Invoice #${d.n}${d.customer ? `, ${d.customer.name}` : ''}`,
++      hint: d.cart.length ? `${d.cart.length} products, ${money(d.cart.reduce((s, l) => s + l.qty * l.unit_price, 0))}` : 'empty',
++      key: `Alt+${i + 1}`, run: () => { switchTo(i); goPos(); },
++    })) : [];
++    const pg: Row[] = pages.map((p) => ({ id: p.href, label: p.label, hint: p.hint, key: p.key, run: () => router.push(p.href) }));
++    const s = q.trim().toLowerCase();
++    return [...inv, ...pg].filter((r) => !s || r.label.toLowerCase().includes(s) || r.hint.toLowerCase().includes(s));
++  }, [drafts, pages, canPos, q, switchTo, goPos, router]);
++
++  if (!open) return null;
++  const pick = (r?: Row) => { if (!r) return; setOpen(false); r.run(); };
++  return (
++    <>
++      <div className="backdrop" onClick={() => setOpen(false)} />
++      <div className="palette" role="dialog" aria-label="Jump to">
++        <input ref={inputRef} value={q} placeholder="Jump to a page or an open invoice" aria-label="Jump to"
++          onChange={(e) => { setQ(e.target.value); setSel(0); }}
++          onKeyDown={(e) => {
++            if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
++            else if (e.key === 'ArrowDown') { e.preventDefault(); setSel((i) => Math.min(i + 1, rows.length - 1)); }
++            else if (e.key === 'ArrowUp') { e.preventDefault(); setSel((i) => Math.max(i - 1, 0)); }
++            else if (e.key === 'Enter') { e.preventDefault(); pick(rows[sel]); }
++          }} />
++        <div className="plist">
++          {rows.length === 0 && <div className="empty">Nothing matches.</div>}
++          {rows.map((r, i) => (
++            <button key={r.id} className={'prow' + (i === sel ? ' on' : '')} onMouseEnter={() => setSel(i)} onClick={() => pick(r)}>
++              <span><b>{r.label}</b> <span className="hint">{r.hint}</span></span>
++              {r.key && <span className="kbd">{r.key}</span>}
++            </button>
++          ))}
++        </div>
++        <div className="hint" style={{ padding: '8px 12px' }}>Alt+N new invoice, Alt+W close invoice, Alt+1 to 9 switch invoice.</div>
++      </div>
++    </>
++  );
++}
+diff --git a/src/components/Header.tsx b/src/components/Header.tsx
+index b3fe31a..f4e25d7 100644
+--- a/src/components/Header.tsx
++++ b/src/components/Header.tsx
+@@ -53,7 +53,7 @@ export default function Header() {
+   const dark = typeof window !== 'undefined' && document.documentElement.dataset.theme === 'dark';
+   const link = (i: NavItem, extra = '') => (
+     <Link key={i.href} href={i.href} role="menuitem" className={'menuitem ' + (sameRoute(path, i.href) ? 'cur ' : '') + extra}>
+-      <span>{i.label}</span><span className="hint">{i.hint}</span>
++      <span className="mi-top"><span>{i.label}</span>{i.key && <span className="kbd">{i.key}</span>}</span><span className="hint">{i.hint}</span>
+     </Link>
+   );
+ 
+diff --git a/src/components/PosDrafts.tsx b/src/components/PosDrafts.tsx
+new file mode 100644
+index 0000000..59c4a17
+--- /dev/null
++++ b/src/components/PosDrafts.tsx
+@@ -0,0 +1,101 @@
++'use client';
++import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
++import type { Kind, Party } from '@/lib/types';
++
++export interface Line { product_id: string; name: string; unit_price: number; qty: number; disc: string }
++export interface Split { kind: Kind; amount: string }
++
++/** One open invoice (a "draft"). Several can be open at once; they survive page changes and reloads. */
++export interface Draft {
++  id: string; n: number;
++  cart: Line[]; billDisc: string; customer: Party | null; cq: string; splits: Split[];
++}
++
++export const MAX_DRAFTS = 9;      // Alt+1 .. Alt+9
++const KEY = 'horeca-pos-drafts';
++const blank = (n: number): Draft => ({
++  id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, n,
++  cart: [], billDisc: '', customer: null, cq: '', splits: [{ kind: 'cash', amount: '' }],
++});
++export const draftIsEmpty = (d: Draft) => d.cart.length === 0;
++
++interface Ctx {
++  drafts: Draft[]; active: Draft;
++  /** Change the active invoice. Safe to call from timers: it always works on the latest state. */
++  patchActive: (f: (d: Draft) => Partial<Draft>) => void;
++  switchTo: (idOrIndex: string | number) => void;
++  newDraft: () => boolean;                       // false when the limit is reached
++  closeDraft: (id: string) => void;
++  finishDraft: (id: string) => void;             // after a completed sale: remove it (or reset it if it is the only one)
++}
++const noop = () => {};
++const first = blank(1);
++const PosDraftsCtx = createContext<Ctx>({
++  drafts: [first], active: first, patchActive: noop, switchTo: noop, newDraft: () => false, closeDraft: noop, finishDraft: noop,
++});
++export const usePosDrafts = () => useContext(PosDraftsCtx);
++
++interface State { drafts: Draft[]; activeId: string; next: number }
++
++export default function PosDraftsProvider({ children }: { children: React.ReactNode }) {
++  const [st, setSt] = useState<State>(() => ({ drafts: [first], activeId: first.id, next: 2 }));
++  const loaded = useRef(false);
++  const cur = useRef(st);
++  cur.current = st;
++
++  // restore after a reload (localStorage only exists in the browser, so this runs after mount)
++  useEffect(() => {
++    try {
++      const raw = localStorage.getItem(KEY);
++      if (raw) {
++        const s = JSON.parse(raw) as State;
++        if (Array.isArray(s.drafts) && s.drafts.length && s.drafts.some((d) => d.id === s.activeId)) setSt(s);
++      }
++    } catch { /* ignore a damaged copy */ }
++    loaded.current = true;
++  }, []);
++  useEffect(() => {
++    if (!loaded.current) return;
++    try { localStorage.setItem(KEY, JSON.stringify(st)); } catch { /* storage full or blocked */ }
++  }, [st]);
++
++  const patchActive = useCallback((f: (d: Draft) => Partial<Draft>) => {
++    setSt((s) => ({ ...s, drafts: s.drafts.map((d) => (d.id === s.activeId ? { ...d, ...f(d) } : d)) }));
++  }, []);
++  const switchTo = useCallback((x: string | number) => {
++    setSt((s) => {
++      const d = typeof x === 'number' ? s.drafts[x] : s.drafts.find((r) => r.id === x);
++      return d ? { ...s, activeId: d.id } : s;
++    });
++  }, []);
++  const newDraft = useCallback(() => {
++    const s0 = cur.current;
++    if (!s0.drafts.some(draftIsEmpty) && s0.drafts.length >= MAX_DRAFTS) return false;
++    setSt((s) => {
++      // reuse an empty invoice instead of piling up blank tabs
++      const empty = s.drafts.find(draftIsEmpty);
++      if (empty) return { ...s, activeId: empty.id };
++      if (s.drafts.length >= MAX_DRAFTS) return s;
++      const d = blank(s.next);
++      return { drafts: [...s.drafts, d], activeId: d.id, next: s.next + 1 };
++    });
++    return true;
++  }, []);
++  const remove = (s: State, id: string): State => {
++    const i = s.drafts.findIndex((d) => d.id === id);
++    if (i < 0) return s;
++    if (s.drafts.length === 1) { const d = blank(s.next); return { drafts: [d], activeId: d.id, next: s.next + 1 }; }
++    const drafts = s.drafts.filter((d) => d.id !== id);
++    const activeId = s.activeId === id ? drafts[Math.min(i, drafts.length - 1)].id : s.activeId;
++    return { ...s, drafts, activeId };
++  };
++  const closeDraft = useCallback((id: string) => setSt((s) => remove(s, id)), []);
++  const finishDraft = closeDraft;
++
++  const active = st.drafts.find((d) => d.id === st.activeId) ?? st.drafts[0];
++  return (
++    <PosDraftsCtx.Provider value={{ drafts: st.drafts, active, patchActive, switchTo, newDraft, closeDraft, finishDraft }}>
++      {children}
++    </PosDraftsCtx.Provider>
++  );
++}
+diff --git a/src/components/Providers.tsx b/src/components/Providers.tsx
+index ea493a5..93cfcd6 100644
+--- a/src/components/Providers.tsx
++++ b/src/components/Providers.tsx
+@@ -5,6 +5,7 @@ import ProfileProvider from './ProfileProvider';
+ import SyncProvider from './SyncProvider';
+ import UpdateProvider from './UpdateProvider';
+ import Shell from './Shell';
++import PosDraftsProvider from './PosDrafts';
+ 
+ export default function Providers({ children }: { children: React.ReactNode }) {
+   return (
+@@ -13,7 +14,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
+         <ProfileProvider>
+           <SyncProvider>
+             <UpdateProvider>
+-              <Shell>{children}</Shell>
++              <PosDraftsProvider><Shell>{children}</Shell></PosDraftsProvider>
+             </UpdateProvider>
+           </SyncProvider>
+         </ProfileProvider>
+diff --git a/src/components/Shell.tsx b/src/components/Shell.tsx
+index 1c0a936..735de00 100644
+--- a/src/components/Shell.tsx
++++ b/src/components/Shell.tsx
+@@ -6,6 +6,7 @@ import { useProfile } from './ProfileProvider';
+ import { permForPath } from '@/lib/permissions';
+ import { ACCOUNT_ITEMS, NAV_GROUPS } from '@/lib/nav';
+ import SettingsSync from './SettingsSync';
++import GlobalShortcuts from './GlobalShortcuts';
+ 
+ export default function Shell({ children }: { children: React.ReactNode }) {
+   const path = usePathname();
+@@ -19,6 +20,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
+   return (
+     <>
+       <SettingsSync />
++      <GlobalShortcuts />
+       <Header />
+       <main className="page">
+         {allowed ? children : (
+diff --git a/src/lib/adminUsers.ts b/src/lib/adminUsers.ts
+index b6562a6..64e3adc 100644
+--- a/src/lib/adminUsers.ts
++++ b/src/lib/adminUsers.ts
+@@ -18,7 +18,9 @@ export async function callAdmin(action: 'create' | 'update' | 'set_password' | '
+       throw new Error('The user service did not accept your sign-in. Redeploy admin-users with "Verify JWT" turned off (the function checks the sign-in itself), then try again.');
+     }
+     if ((error as any).name === 'FunctionsFetchError' || /failed to send/i.test(error.message)) {
+-      throw new Error('Could not reach the user service. Check the internet connection. If it keeps happening the admin-users function may not be deployed.');
++      if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('You are offline. Connect to the internet and try again.');
++      // Online but no answer: Supabase answers a missing function (and a blocked CORS check) without CORS headers, so the browser reports it as a network failure.
++      throw new Error('The user service did not answer. In Supabase open Edge Functions: admin-users must be deployed with the latest index.ts from the repo (steps: supabase/functions/admin-users/README.md). Then try again.');
+     }
+     throw new Error(body?.message || error.message);
+   }
+diff --git a/src/lib/nav.ts b/src/lib/nav.ts
+index 5e30dbf..f78da38 100644
+--- a/src/lib/nav.ts
++++ b/src/lib/nav.ts
+@@ -1,35 +1,35 @@
+-export interface NavItem { href: string; label: string; hint: string }
++export interface NavItem { href: string; label: string; hint: string; key?: string }   // key: shortcut, e.g. 'Alt+S'
+ export interface NavGroup { label: string; items: NavItem[] }
+ 
+ /** Main menu. A group with one page is shown as a plain link. */
+ export const NAV_GROUPS: NavGroup[] = [
+-  { label: 'POS', items: [{ href: '/', label: 'POS', hint: 'Make a sale' }] },
++  { label: 'POS', items: [{ href: '/', key: 'Alt+P', label: 'POS', hint: 'Make a sale' }] },
+   { label: 'Selling', items: [
+-    { href: '/sales/', label: 'Sales', hint: 'Past invoices, reprint, cancel' },
+-    { href: '/returns/', label: 'Returns', hint: 'Take items back from an invoice' },
++    { href: '/sales/', key: 'Alt+S', label: 'Sales', hint: 'Past invoices, reprint, cancel' },
++    { href: '/returns/', key: 'Alt+R', label: 'Returns', hint: 'Take items back from an invoice' },
+   ] },
+   { label: 'Stock', items: [
+-    { href: '/products/', label: 'Products', hint: 'Items, prices, barcodes, stock' },
+-    { href: '/purchases/', label: 'Purchases', hint: 'Restock from a supplier' },
+-    { href: '/purchase-returns/', label: 'Purchase returns', hint: 'Send items back to a supplier' },
+-    { href: '/suppliers/', label: 'Suppliers', hint: 'Who you buy from, what you owe' },
++    { href: '/products/', key: 'Alt+I', label: 'Products', hint: 'Items, prices, barcodes, stock' },
++    { href: '/purchases/', key: 'Alt+U', label: 'Purchases', hint: 'Restock from a supplier' },
++    { href: '/purchase-returns/', key: 'Alt+Shift+P', label: 'Purchase returns', hint: 'Send items back to a supplier' },
++    { href: '/suppliers/', key: 'Alt+V', label: 'Suppliers', hint: 'Who you buy from, what you owe' },
+   ] },
+   { label: 'People', items: [
+-    { href: '/customers/', label: 'Customers', hint: 'Retail and B2B customers' },
+-    { href: '/employees/', label: 'Employees', hint: 'Salary, advances, payments' },
++    { href: '/customers/', key: 'Alt+C', label: 'Customers', hint: 'Retail and B2B customers' },
++    { href: '/employees/', key: 'Alt+M', label: 'Employees', hint: 'Salary, advances, payments' },
+   ] },
+   { label: 'Money', items: [
+-    { href: '/expenses/', label: 'Expenses', hint: 'Rent, bills, running costs' },
+-    { href: '/payments/', label: 'Payments', hint: 'Receive and pay money' },
+-    { href: '/accounts/', label: 'Accounts', hint: 'Cash, bank, Easypaisa, JazzCash' },
+-    { href: '/ledgers/', label: 'Ledgers', hint: 'Customer, supplier, employee statements' },
++    { href: '/expenses/', key: 'Alt+X', label: 'Expenses', hint: 'Rent, bills, running costs' },
++    { href: '/payments/', key: 'Alt+Y', label: 'Payments', hint: 'Receive and pay money' },
++    { href: '/accounts/', key: 'Alt+A', label: 'Accounts', hint: 'Cash, bank, Easypaisa, JazzCash' },
++    { href: '/ledgers/', key: 'Alt+G', label: 'Ledgers', hint: 'Customer, supplier, employee statements' },
+   ] },
+ ];
+ 
+ /** Shown in the user menu, top right. */
+ export const ACCOUNT_ITEMS: NavItem[] = [
+-  { href: '/settings/', label: 'Settings', hint: 'Printers, scanner, shop details' },
+-  { href: '/users/', label: 'Users', hint: 'Who can sign in, and what they can do' },
++  { href: '/settings/', key: 'Alt+T', label: 'Settings', hint: 'Printers, scanner, shop details' },
++  { href: '/users/', key: 'Alt+Shift+U', label: 'Users', hint: 'Who can sign in, and what they can do' },
+ ];
+ 
+ export const sameRoute = (a: string, b: string) => (a.length > 1 ? a.replace(/\/$/, '') : a) === (b.length > 1 ? b.replace(/\/$/, '') : b);
+diff --git a/supabase/functions/admin-users/index.ts b/supabase/functions/admin-users/index.ts
+index 89aae6c..a5c6ab8 100644
+--- a/supabase/functions/admin-users/index.ts
++++ b/supabase/functions/admin-users/index.ts
+@@ -5,8 +5,9 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
+ 
+ const cors = {
+   'Access-Control-Allow-Origin': '*',
+-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
++  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-api-version, x-region',
+   'Access-Control-Allow-Methods': 'POST, OPTIONS',
++  'Access-Control-Max-Age': '86400',
+ };
+ const json = (body: unknown, status = 200) =>
+   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
