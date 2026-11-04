@@ -32,3 +32,9 @@ Push to GitHub, import in Vercel, add the two env vars. `npm run build` outputs 
 - POS: `F2` scan box, `Ctrl+Enter` complete sale, `Ctrl+Shift+Enter` complete and print.
 - Several invoices at once: `Alt+N` new invoice, `Alt+1` to `Alt+9` switch, `Alt+W` close. They stay open when you visit other pages.
 - Pages: `Alt+` the letter shown beside each menu item (for example `Alt+S` Sales, `Alt+I` Products). `Alt+K` or `Ctrl+K` opens a jump list.
+
+## Cancelling a purchase
+Run `supabase/migration_purchase_cancel.sql` once in the Supabase SQL editor. Then open a purchase on the Purchases page and choose Cancel purchase (needs the new "Cancel purchases" permission; administrators have it).
+
+## Product supplier, short code and field access
+Run `supabase/migration_product_fields.sql` once. On Users, each staff user gets Hidden / View only / Edit for Cost price and Stock on hand. A short code typed in the POS or Purchases search box adds that product directly.

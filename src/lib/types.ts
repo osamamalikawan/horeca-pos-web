@@ -3,6 +3,7 @@ export type Kind = 'cash' | 'bank' | 'easypaisa' | 'jazzcash';
 export interface Product {
   id: string; barcode: string | null; name: string; category: string | null;
   cost_price: number; sale_price: number; stock_qty: number; low_stock_alert: number;
+  supplier_id?: string | null; short_code?: string | null;
   created_at: string; updated_at: string; deleted_at: string | null;
 }
 export interface Party {

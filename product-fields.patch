@@ -1,0 +1,519 @@
+diff --git a/README.md b/README.md
+index 04530f3..157e1d9 100644
+--- a/README.md
++++ b/README.md
+@@ -32,3 +32,9 @@ Push to GitHub, import in Vercel, add the two env vars. `npm run build` outputs
+ - POS: `F2` scan box, `Ctrl+Enter` complete sale, `Ctrl+Shift+Enter` complete and print.
+ - Several invoices at once: `Alt+N` new invoice, `Alt+1` to `Alt+9` switch, `Alt+W` close. They stay open when you visit other pages.
+ - Pages: `Alt+` the letter shown beside each menu item (for example `Alt+S` Sales, `Alt+I` Products). `Alt+K` or `Ctrl+K` opens a jump list.
++
++## Cancelling a purchase
++Run `supabase/migration_purchase_cancel.sql` once in the Supabase SQL editor. Then open a purchase on the Purchases page and choose Cancel purchase (needs the new "Cancel purchases" permission; administrators have it).
++
++## Product supplier, short code and field access
++Run `supabase/migration_product_fields.sql` once. On Users, each staff user gets Hidden / View only / Edit for Cost price and Stock on hand. A short code typed in the POS or Purchases search box adds that product directly.
+diff --git a/src/app/pos/page.tsx b/src/app/pos/page.tsx
+index 1ac53b8..6a31434 100644
+--- a/src/app/pos/page.tsx
++++ b/src/app/pos/page.tsx
+@@ -12,6 +12,7 @@ import { customerBalances } from '@/lib/ledger';
+ import PrintPortal from '@/components/PrintPortal';
+ import ReceiptView, { type Receipt } from '@/components/ReceiptView';
+ import { useSettings } from '@/components/SettingsProvider';
++import { fieldLevel } from '@/lib/permissions';
+ import { usePosDrafts, MAX_DRAFTS, type Line, type Split } from '@/components/PosDrafts';
+ 
+ const round3 = (n: number) => Math.round(n * 1000) / 1000;
+@@ -25,6 +26,7 @@ export default function PosPage() {
+   const { settings } = useSettings();
+   const { can, legacy, profile } = useProfile();
+   const canSell = can('pos.edit'), canDiscount = can('pos.discount'), canPrice = can('pos.price');
++  const seeStock = fieldLevel(can, 'stock') !== 'hide';
+   const products = useLiveQuery(() => db.products.filter((p) => !p.deleted_at).toArray(), []);
+   const accounts = useLiveQuery(() => db.accounts.toArray(), []);
+   const owed = useLiveQuery(() => customerBalances(), []);
+@@ -74,7 +76,7 @@ export default function PosPage() {
+   const list = useMemo(() => {
+     const s = q.trim().toLowerCase();
+     const all = (products ?? []).filter((p) => !cat || (p.category ?? '').trim() === cat).sort((a, b) => a.name.localeCompare(b.name));
+-    return (s ? all.filter((p) => p.name.toLowerCase().includes(s) || (p.barcode ?? '').includes(s)) : all).slice(0, 80);
++    return (s ? all.filter((p) => p.name.toLowerCase().includes(s) || (p.barcode ?? '').includes(s) || (p.short_code ?? '').toLowerCase().includes(s)) : all).slice(0, 80);
+   }, [products, q, cat]);
+ 
+   function add(p: Product) {
+@@ -88,7 +90,8 @@ export default function PosPage() {
+   function submitSearch(e?: React.KeyboardEvent) {
+     const s = q.trim();
+     if (!s) return;
+-    const exact = (products ?? []).find((p) => p.barcode === s);
++    // a barcode or a short code that matches exactly goes straight onto the invoice
++    const exact = (products ?? []).find((p) => p.barcode === s) ?? (products ?? []).find((p) => !!p.short_code && p.short_code.toLowerCase() === s.toLowerCase());
+     const hit = exact ?? (list.length === 1 ? list[0] : undefined);
+     if (hit) { add(hit); setQ(''); setMsg(''); if (exact && sc.beep) beep(true); e?.preventDefault(); }
+     else { setMsg(`No product matches “${s}”`); if (sc.beep) beep(false); }
+@@ -264,7 +267,7 @@ export default function PosPage() {
+       {/* left: scan, search and products */}
+       <section className="pos-left">
+         <div className="pos-bar">
+-          <input ref={searchRef} className="pos-search" value={q} autoFocus placeholder="Scan a barcode or search products"
++          <input ref={searchRef} className="pos-search" value={q} autoFocus placeholder="Scan a barcode, type a short code or search"
+             aria-label="Scan or search" onChange={(e) => { setQ(e.target.value); setMsg(''); }} onKeyDown={onSearchKey} />
+           <div className="pos-hint">{msg ? <span className="err">{msg}</span> : <span className="mute">Scan or type, then Enter. F2 returns here. Alt+N new invoice, Alt+1 to 9 switch, Alt+K jump to a page.</span>}</div>
+           {categories.length > 0 && (
+@@ -288,7 +291,7 @@ export default function PosPage() {
+                   {n ? <span className="pbadge num">{qtyFmt(n)}</span> : null}
+                   <span className="pname">{p.name}</span>
+                   <span className="pprice num">{money(p.sale_price)}</span>
+-                  <span className={'pstock num' + (low ? ' low' : '')}>{low ? `Out of stock (${qtyFmt(p.stock_qty)})` : `${qtyFmt(p.stock_qty)} in stock`}</span>
++                  {seeStock && <span className={'pstock num' + (low ? ' low' : '')}>{low ? `Out of stock (${qtyFmt(p.stock_qty)})` : `${qtyFmt(p.stock_qty)} in stock`}</span>}
+                 </button>
+               );
+             })}
+@@ -382,10 +385,10 @@ export default function PosPage() {
+                     ? <input className="pl-disc" aria-label="Discount" placeholder="Disc. 50 or 10%" value={l.disc} onChange={(e) => patch(i, { disc: e.target.value })} />
+                     : <span />}
+                 </div>
+-                {(l.qty > stock || (listPrice !== undefined && listPrice !== l.unit_price)) && (
++                {((seeStock && l.qty > stock) || (listPrice !== undefined && listPrice !== l.unit_price)) && (
+                   <div className="pl-note num">
+                     {listPrice !== undefined && listPrice !== l.unit_price && <span className="mute">list price {money(listPrice)}</span>}
+-                    {l.qty > stock && <span className="warn">stock will go to {qtyFmt(stock - l.qty)}</span>}
++                    {seeStock && l.qty > stock && <span className="warn">stock will go to {qtyFmt(stock - l.qty)}</span>}
+                   </div>
+                 )}
+               </div>
+diff --git a/src/app/products/page.tsx b/src/app/products/page.tsx
+index 1332ef7..bb2932f 100644
+--- a/src/app/products/page.tsx
++++ b/src/app/products/page.tsx
+@@ -1,5 +1,6 @@
+ 'use client';
+ import { useMemo, useState } from 'react';
++import { fieldLevel } from '@/lib/permissions';
+ import { useLiveQuery } from 'dexie-react-hooks';
+ import { db, moveStock, putRow } from '@/lib/db';
+ import { genEan13, money, qtyFmt, uid } from '@/lib/util';
+@@ -13,16 +14,20 @@ import { labelPage, printPage } from '@/lib/print';
+ 
+ interface Form {
+   id: string | null; name: string; barcode: string; category: string;
+-  cost: string; price: string; stock: string; alert: string;
++  cost: string; price: string; stock: string; alert: string; supplier: string; code: string;
+ }
+-const blank: Form = { id: null, name: '', barcode: '', category: '', cost: '', price: '', stock: '', alert: '' };
++const blank: Form = { id: null, name: '', barcode: '', category: '', cost: '', price: '', stock: '', alert: '', supplier: '', code: '' };
+ 
+ export default function ProductsPage() {
+   const { settings } = useSettings();
+   const { can } = useProfile();
+-  const canEdit = can('products.edit'), seeCost = can('products.cost');
++  const canEdit = can('products.edit');
++  const costLevel = fieldLevel(can, 'cost'), stockLevel = fieldLevel(can, 'stock');
++  const seeCost = costLevel !== 'hide', seeStock = stockLevel !== 'hide';
+   const [copies, setCopies] = useState('');
+   const products = useLiveQuery(() => db.products.filter((p) => !p.deleted_at).toArray(), []);
++  const suppliers = useLiveQuery(() => db.parties.filter((p) => p.type === 'supplier' && !p.deleted_at).toArray(), []) ?? [];
++  const supName = useMemo(() => new Map(suppliers.map((s) => [s.id, s.name])), [suppliers]);
+   const [q, setQ] = useState('');
+   const [form, setForm] = useState<Form | null>(null);
+   const [error, setError] = useState('');
+@@ -31,14 +36,16 @@ export default function ProductsPage() {
+   const list = useMemo(() => {
+     const s = q.trim().toLowerCase();
+     const all = (products ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
+-    return s ? all.filter((p) => p.name.toLowerCase().includes(s) || (p.barcode ?? '').includes(s) || (p.category ?? '').toLowerCase().includes(s)) : all;
+-  }, [products, q]);
++    return s ? all.filter((p) => p.name.toLowerCase().includes(s) || (p.barcode ?? '').includes(s) || (p.category ?? '').toLowerCase().includes(s)
++      || (p.short_code ?? '').toLowerCase().includes(s) || (p.supplier_id ? (supName.get(p.supplier_id) ?? '').toLowerCase().includes(s) : false)) : all;
++  }, [products, q, supName]);
+ 
+   function openEdit(p: Product) {
+     setError('');
+     setForm({
+       id: p.id, name: p.name, barcode: p.barcode ?? '', category: p.category ?? '',
+       cost: String(p.cost_price), price: String(p.sale_price), stock: String(p.stock_qty), alert: String(p.low_stock_alert ?? 0),
++      supplier: p.supplier_id ?? '', code: p.short_code ?? '',
+     });
+   }
+   function openNew(barcode = '') { setError(''); setForm({ ...blank, barcode }); }
+@@ -48,7 +55,7 @@ export default function ProductsPage() {
+     if (e.key !== 'Enter') return;
+     const s = q.trim();
+     if (!s) return;
+-    const hit = (products ?? []).find((p) => p.barcode === s);
++    const hit = (products ?? []).find((p) => p.barcode === s || (!!p.short_code && p.short_code.toLowerCase() === s.toLowerCase()));
+     if (hit) { openEdit(hit); setQ(''); setMsg(''); }
+     else if (canEdit && /^\d{6,}$/.test(s)) { openNew(s); setQ(''); setMsg(''); }
+     else if (list.length === 1) openEdit(list[0]);
+@@ -67,6 +74,8 @@ export default function ProductsPage() {
+     const name = form.name.trim();
+     const price = Number(form.price), cost = Number(form.cost || 0), stock = Number(form.stock || 0), alert = Number(form.alert || 0);
+     const barcode = form.barcode.trim() || null;
++    const code = form.code.trim() || null;
++    const supplier_id = form.supplier || null;
+     if (!name) return setError('Enter a product name.');
+     if (!isFinite(price) || price < 0 || form.price === '') return setError('Enter a sale price.');
+     if (!isFinite(cost) || !isFinite(stock) || !isFinite(alert)) return setError('Cost, stock and alert level must be numbers.');
+@@ -75,22 +84,31 @@ export default function ProductsPage() {
+       const clash = (products ?? []).find((p) => p.barcode === barcode && p.id !== form.id);
+       if (clash) return setError(`Barcode already used by “${clash.name}”.`);
+     }
++    if (code) {
++      if (!/^\S{1,20}$/.test(code)) return setError('The short code can be up to 20 characters, with no spaces.');
++      const low = code.toLowerCase();
++      const clash = (products ?? []).find((p) => p.id !== form.id && ((p.short_code ?? '').toLowerCase() === low || p.barcode === code));
++      if (clash) return setError(`Short code already used by “${clash.name}”.`);
++      if ((products ?? []).some((p) => p.id !== form.id && p.barcode === code)) return setError('That code is another product’s barcode.');
++    }
++    // values the user may not change are kept as they were (a hidden or view-only value is never overwritten)
++    const newCost = costLevel === 'edit' ? cost : 0, newStock = stockLevel === 'edit' ? stock : 0;
+     const now = new Date().toISOString();
+     if (!form.id) {
+       const id = uid();
+       await putRow('products', {
+-        id, barcode, name, category: form.category.trim() || null, cost_price: cost, sale_price: price,
+-        stock_qty: 0, low_stock_alert: alert, created_at: now, deleted_at: null,
++        id, barcode, name, category: form.category.trim() || null, cost_price: newCost, sale_price: price,
++        stock_qty: 0, low_stock_alert: alert, supplier_id, short_code: code, created_at: now, deleted_at: null,
+       });
+-      if (stock !== 0) await moveStock(id, stock, 'opening');
++      if (newStock !== 0) await moveStock(id, newStock, 'opening');
+     } else {
+       const cur = await db.products.get(form.id);
+       if (!cur) return;
+       await putRow('products', {
+         ...cur, barcode, name, category: form.category.trim() || null,
+-        cost_price: cost, sale_price: price, low_stock_alert: alert,
++        cost_price: costLevel === 'edit' ? cost : cur.cost_price, sale_price: price, low_stock_alert: alert, supplier_id, short_code: code,
+       });
+-      const diff = stock - Number(cur.stock_qty);
++      const diff = stockLevel === 'edit' ? stock - Number(cur.stock_qty) : 0;
+       if (diff !== 0) await moveStock(cur.id, diff, 'adjustment');
+     }
+     setForm(null);
+@@ -115,7 +133,7 @@ export default function ProductsPage() {
+           <div className="mute">{products ? `${products.length} products` : ' '}</div>
+         </div>
+         <div className="tools">
+-          <input style={{ width: 300 }} value={q} autoFocus placeholder="Scan a barcode or search"
++          <input style={{ width: 300 }} value={q} autoFocus placeholder="Scan a barcode, short code or search"
+             onChange={(e) => { setQ(e.target.value); setMsg(''); }} onKeyDown={onSearchKey} />
+           {canEdit && <button className="btn primary" onClick={() => openNew()}>Add product</button>}
+         </div>
+@@ -127,7 +145,7 @@ export default function ProductsPage() {
+       ) : (
+         <table>
+           <thead>
+-            <tr><th>Name</th><th>Barcode</th><th>Category</th>{seeCost && <th className="right">Cost</th>}<th className="right">Sale price</th><th className="right">Stock</th></tr>
++            <tr><th>Name</th><th>Code</th><th>Barcode</th><th>Category</th><th>Supplier</th>{seeCost && <th className="right">Cost</th>}<th className="right">Sale price</th>{seeStock && <th className="right">Stock</th>}</tr>
+           </thead>
+           <tbody>
+             {list.map((p) => {
+@@ -135,11 +153,13 @@ export default function ProductsPage() {
+               return (
+                 <tr key={p.id} onClick={() => openEdit(p)}>
+                   <td>{p.name}</td>
++                  <td className="num">{p.short_code ?? ''}</td>
+                   <td className="num mute">{p.barcode ?? ''}</td>
+                   <td className="mute">{p.category ?? ''}</td>
++                  <td className="mute">{p.supplier_id ? supName.get(p.supplier_id) ?? '' : ''}</td>
+                   {seeCost && <td className="right num">{money(p.cost_price)}</td>}
+                   <td className="right num">{money(p.sale_price)}</td>
+-                  <td className={'right num ' + (low ? 'warn' : '')}>{qtyFmt(p.stock_qty)}</td>
++                  {seeStock && <td className={'right num ' + (low ? 'warn' : '')}>{qtyFmt(p.stock_qty)}</td>}
+                 </tr>
+               );
+             })}
+@@ -186,16 +206,25 @@ export default function ProductsPage() {
+                 </PrintPortal>
+               </div>
+             )}
+-            <label>Category<input value={form.category} onChange={set('category')} /></label>
+             <div className="two">
+-              {seeCost && <label>Cost price<input inputMode="decimal" value={form.cost} onChange={set('cost')} /></label>}
++              <label>Short code<input value={form.code} onChange={set('code')} placeholder="Quick code to type at the POS" maxLength={20} /></label>
++              <label>Category<input value={form.category} onChange={set('category')} /></label>
++            </div>
++            <label>Supplier
++              <select value={form.supplier} onChange={(e) => setForm((f) => f && { ...f, supplier: e.target.value })}>
++                <option value="">None</option>
++                {suppliers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
++              </select>
++            </label>
++            <div className="two">
++              {seeCost && <label>Cost price<input inputMode="decimal" value={form.cost} onChange={set('cost')} disabled={costLevel !== 'edit'} /></label>}
+               <label>Sale price<input inputMode="decimal" value={form.price} onChange={set('price')} /></label>
+             </div>
+             <div className="two">
+-              <label>{form.id ? 'Stock on hand' : 'Opening stock'}<input inputMode="decimal" value={form.stock} onChange={set('stock')} /></label>
++              {seeStock && <label>{form.id ? 'Stock on hand' : 'Opening stock'}<input inputMode="decimal" value={form.stock} onChange={set('stock')} disabled={stockLevel !== 'edit'} /></label>}
+               <label>Low stock alert<input inputMode="decimal" value={form.alert} onChange={set('alert')} /></label>
+             </div>
+-            {form.id && <div className="mute">Changing stock records an adjustment in the stock history.</div>}
++            {form.id && stockLevel === 'edit' && <div className="mute">Changing stock records an adjustment in the stock history.</div>}
+             {error && <div className="err">{error}</div>}
+           </>
+         )}
+diff --git a/src/app/purchases/page.tsx b/src/app/purchases/page.tsx
+index c1f4e48..9af58ed 100644
+--- a/src/app/purchases/page.tsx
++++ b/src/app/purchases/page.tsx
+@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
+ import { db, moveStock, putRow } from '@/lib/db';
+ import { money, nextNo, qtyFmt, round2, uid } from '@/lib/util';
+ import { cancelPurchase } from '@/lib/purchaseReturns';
++import { fieldLevel } from '@/lib/permissions';
+ import { beep } from '@/lib/print';
+ import { inPeriod, shortDate, type Period } from '@/lib/period';
+ import type { Party, Product } from '@/lib/types';
+@@ -21,6 +22,7 @@ export default function PurchasesPage() {
+   const { settings } = useSettings();
+   const { can } = useProfile();
+   const canEdit = can('purchases.edit'), canCancel = can('purchases.cancel');
++  const costLevel = fieldLevel(can, 'cost'), seeCost = costLevel !== 'hide', seeStock = fieldLevel(can, 'stock') !== 'hide';
+   const data = useLiveQuery(async () => {
+     const [purchases, parties, products, accounts] = await Promise.all([
+       db.purchases.filter((p) => !p.deleted_at).toArray(),
+@@ -91,7 +93,7 @@ export default function PurchasesPage() {
+   const productMatches = useMemo(() => {
+     const s = pq.trim().toLowerCase();
+     if (!s) return [];
+-    return (data?.products ?? []).filter((p) => p.name.toLowerCase().includes(s) || (p.barcode ?? '').includes(s))
++    return (data?.products ?? []).filter((p) => p.name.toLowerCase().includes(s) || (p.barcode ?? '').includes(s) || (p.short_code ?? '').toLowerCase().includes(s))
+       .sort((a, b) => a.name.localeCompare(b.name)).slice(0, 8);
+   }, [data, pq]);
+   const supMatches = useMemo(() => {
+@@ -104,7 +106,7 @@ export default function PurchasesPage() {
+     setLines((ls) => {
+       const i = ls.findIndex((l) => l.product_id === p.id);
+       if (i >= 0) return ls.map((l, j) => (j === i ? { ...l, qty: Math.round((l.qty + 1) * 1000) / 1000 } : l));
+-      return [...ls, { product_id: p.id, name: p.name, qty: 1, cost: Number(p.cost_price) }];
++      return [...ls, { product_id: p.id, name: p.name, qty: 1, cost: seeCost ? Number(p.cost_price) : 0 }];   // a hidden cost price is not pre-filled
+     });
+     setPq(''); setMsg(''); searchRef.current?.focus();
+   }
+@@ -112,7 +114,7 @@ export default function PurchasesPage() {
+     if (e.key !== 'Enter') return;
+     const s = pq.trim();
+     if (!s) return;
+-    const exact = (data?.products ?? []).find((p) => p.barcode === s);
++    const exact = (data?.products ?? []).find((p) => p.barcode === s) ?? (data?.products ?? []).find((p) => !!p.short_code && p.short_code.toLowerCase() === s.toLowerCase());
+     const hit = exact ?? (productMatches.length === 1 ? productMatches[0] : undefined);
+     if (hit) { addProduct(hit); if (exact && settings.scanner.beep) beep(true); }
+     else { setMsg('No product matches. Add it on the Products page first.'); if (settings.scanner.beep) beep(false); }
+@@ -155,7 +157,7 @@ export default function PurchasesPage() {
+             line_total: round2(l.qty * l.cost),
+           });
+           await moveStock(l.product_id, l.qty, 'purchase', id);
+-          if (updateCost) {
++          if (updateCost && costLevel === 'edit') {
+             const cur = await db.products.get(l.product_id);
+             if (cur && Number(cur.cost_price) !== l.cost) await putRow('products', { ...cur, cost_price: l.cost });
+           }
+@@ -258,13 +260,13 @@ export default function PurchasesPage() {
+         </div>
+ 
+         <div style={{ display: 'grid', gap: 6 }}>
+-          <input ref={searchRef} value={pq} placeholder="Scan a barcode or search products to add" onChange={(e) => { setPq(e.target.value); setMsg(''); }} onKeyDown={onSearchKey} />
++          <input ref={searchRef} value={pq} placeholder="Scan a barcode, type a short code or search products to add" onChange={(e) => { setPq(e.target.value); setMsg(''); }} onKeyDown={onSearchKey} />
+           {msg && <div className="err">{msg}</div>}
+           {productMatches.length > 0 && (
+             <div className="pick">
+               {productMatches.map((p) => (
+                 <button key={p.id} onClick={() => addProduct(p)}>
+-                  <span>{p.name}</span><span className="mute num">stock {qtyFmt(p.stock_qty)}, cost {money(p.cost_price)}</span>
++                  <span>{p.name}</span><span className="mute num">{[seeStock ? `stock ${qtyFmt(p.stock_qty)}` : '', seeCost ? `cost ${money(p.cost_price)}` : ''].filter(Boolean).join(', ')}</span>
+                 </button>
+               ))}
+             </div>
+@@ -273,12 +275,12 @@ export default function PurchasesPage() {
+ 
+         {lines.length === 0 ? <div className="empty">Search or scan the products you are restocking.</div> : (
+           <table className="plain">
+-            <thead><tr><th>Product</th><th className="right">In stock</th><th className="right">Qty</th><th className="right">Cost price</th><th className="right">Total</th><th /></tr></thead>
++            <thead><tr><th>Product</th>{seeStock && <th className="right">In stock</th>}<th className="right">Qty</th><th className="right">Cost price</th><th className="right">Total</th><th /></tr></thead>
+             <tbody>
+               {lines.map((l, i) => (
+                 <tr key={l.product_id}>
+                   <td>{l.name}</td>
+-                  <td className="right num mute">{qtyFmt(byId.get(l.product_id)?.stock_qty ?? 0)}</td>
++                  {seeStock && <td className="right num mute">{qtyFmt(byId.get(l.product_id)?.stock_qty ?? 0)}</td>}
+                   <td className="right"><NumInput className="num" label="Quantity" live decimals={3} value={l.qty} onCommit={(n) => patch(i, { qty: n })} /></td>
+                   <td className="right"><NumInput className="num" label="Cost price" clearOnFocus value={l.cost} onCommit={(n) => patch(i, { cost: n })} /></td>
+                   <td className="right num">{money(l.qty * l.cost)}</td>
+@@ -289,7 +291,7 @@ export default function PurchasesPage() {
+           </table>
+         )}
+ 
+-        <label className="check"><input type="checkbox" checked={updateCost} onChange={(e) => setUpdateCost(e.target.checked)} />Update each product’s cost price to the price on this purchase</label>
++        {costLevel === 'edit' && <label className="check"><input type="checkbox" checked={updateCost} onChange={(e) => setUpdateCost(e.target.checked)} />Update each product’s cost price to the price on this purchase</label>}
+ 
+         <div className="summary">
+           <div className="rl2"><span className="mute">Total products</span><span className="num">{lines.length}</span></div>
+diff --git a/src/app/users/page.tsx b/src/app/users/page.tsx
+index 8e30a06..b101fda 100644
+--- a/src/app/users/page.tsx
++++ b/src/app/users/page.tsx
+@@ -2,7 +2,7 @@
+ import { useCallback, useEffect, useState } from 'react';
+ import { supabase } from '@/lib/supabase';
+ import { callAdmin } from '@/lib/adminUsers';
+-import { MODULES, PRESETS, withViews, type Profile } from '@/lib/permissions';
++import { FIELDS, FIELD_PERMS, MODULES, PRESETS, levelOf, withLevel, withViews, type FieldKey, type Level, type Profile } from '@/lib/permissions';
+ import Drawer from '@/components/Drawer';
+ import MigrationNotice from '@/components/MigrationNotice';
+ import { useProfile } from '@/components/ProfileProvider';
+@@ -41,10 +41,12 @@ export default function UsersPage() {
+     if (!form) return;
+     const key = `${module}.${action}`;
+     let next = on ? [...form.permissions, key] : form.permissions.filter((p) => p !== key);
+-    if (!on && action === 'view') next = next.filter((p) => !p.startsWith(module + '.'));   // no view, no other actions
++    if (!on && action === 'view') next = next.filter((p) => !p.startsWith(module + '.') || FIELD_PERMS.includes(p));   // no view, no other actions (field access is separate)
+     setForm({ ...form, permissions: withViews(next) });
+   }
+ 
++  const setLevel = (f: FieldKey, l: Level) => form && setForm({ ...form, permissions: withViews(withLevel(form.permissions, f, l)) });
++
+   async function save() {
+     if (!form) return;
+     const name = form.name.trim(), email = form.email.trim();
+@@ -172,6 +174,20 @@ export default function UsersPage() {
+                   </tbody>
+                 </table>
+                 <div className="mute" style={{ fontSize: 13 }}>Ticking anything on a page also lets the user open that page.</div>
++                <div style={{ display: 'grid', gap: 8 }}>
++                  <span className="mute" style={{ fontSize: 13 }}>Product values</span>
++                  {FIELDS.map((f) => (
++                    <div key={f.key} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, alignItems: 'center' }}>
++                      <span>{f.label}<span className="hint" style={{ display: 'block' }}>{f.note}</span></span>
++                      <div className="seg" style={{ gridTemplateColumns: 'repeat(3, auto)' }} role="group" aria-label={f.label}>
++                        {([['hide', 'Hidden'], ['view', 'View only'], ['edit', 'Edit']] as [Level, string][]).map(([l, label]) => (
++                          <button key={l} className={levelOf(form.permissions, f.key) === l ? 'on' : ''} style={{ padding: '0 12px' }} onClick={() => setLevel(f.key, l)}>{label}</button>
++                        ))}
++                      </div>
++                    </div>
++                  ))}
++                  <div className="mute" style={{ fontSize: 13 }}>Hidden values are not shown in the app. Editing the product page also needs “Add and edit” on Products.</div>
++                </div>
+               </>
+             )}
+ 
+diff --git a/src/lib/permissions.ts b/src/lib/permissions.ts
+index f14460b..920e627 100644
+--- a/src/lib/permissions.ts
++++ b/src/lib/permissions.ts
+@@ -9,7 +9,7 @@ export const MODULES: ModuleDef[] = [
+   { key: 'sales', label: 'Sales', actions: [{ key: 'view', label: 'Open' }, { key: 'cancel', label: 'Cancel sales' }] },
+   { key: 'returns', label: 'Returns', actions: [{ key: 'view', label: 'Open' }, { key: 'edit', label: 'Make returns' }] },
+   { key: 'products', label: 'Products', actions: [
+-    { key: 'view', label: 'Open' }, { key: 'edit', label: 'Add and edit' }, { key: 'cost', label: 'See cost prices' } ] },
++    { key: 'view', label: 'Open' }, { key: 'edit', label: 'Add and edit' } ] },
+   { key: 'purchases', label: 'Purchases', actions: [{ key: 'view', label: 'Open' }, { key: 'edit', label: 'Add and edit' }, { key: 'cancel', label: 'Cancel purchases' }] },
+   { key: 'suppliers', label: 'Suppliers', actions: [{ key: 'view', label: 'Open' }, { key: 'edit', label: 'Add and edit' }] },
+   { key: 'customers', label: 'Customers', actions: [{ key: 'view', label: 'Open' }, { key: 'edit', label: 'Add and edit' }] },
+@@ -21,17 +21,40 @@ export const MODULES: ModuleDef[] = [
+   { key: 'settings', label: 'Settings', actions: [{ key: 'view', label: 'Open' }] },
+ ];
+ 
+-export const ALL_PERMS = MODULES.flatMap((m) => m.actions.map((a) => `${m.key}.${a.key}`));
++/**
++ * Field-level access to two product values, set per user as Hidden / View only / Edit:
++ *   products.cost = can see the cost price,  products.cost_edit = can also change it   (same for stock)
++ * They do not need the Products page: a cashier can see stock on the POS without opening Products.
++ */
++export type Level = 'hide' | 'view' | 'edit';
++export type FieldKey = 'cost' | 'stock';
++export const FIELDS: { key: FieldKey; label: string; note: string }[] = [
++  { key: 'cost', label: 'Cost price', note: 'Shown on Products and as the starting cost when buying' },
++  { key: 'stock', label: 'Stock on hand', note: 'Shown on Products, the POS and Purchases' },
++];
++export const FIELD_PERMS = FIELDS.flatMap((f) => [`products.${f.key}`, `products.${f.key}_edit`]);
++export const levelOf = (perms: string[], f: FieldKey): Level =>
++  perms.includes(`products.${f}_edit`) ? 'edit' : perms.includes(`products.${f}`) ? 'view' : 'hide';
++export const withLevel = (perms: string[], f: FieldKey, level: Level) => {
++  const rest = perms.filter((p) => p !== `products.${f}` && p !== `products.${f}_edit`);
++  return level === 'edit' ? [...rest, `products.${f}`, `products.${f}_edit`] : level === 'view' ? [...rest, `products.${f}`] : rest;
++};
++/** What the signed-in user may do with a field. Administrators can always edit. */
++export const fieldLevel = (can: (p: string) => boolean, f: FieldKey): Level =>
++  can(`products.${f}_edit`) ? 'edit' : can(`products.${f}`) ? 'view' : 'hide';
++
++export const ALL_PERMS = [...MODULES.flatMap((m) => m.actions.map((a) => `${m.key}.${a.key}`)), ...FIELD_PERMS];
+ 
+ /** Any action on a module needs the module to be openable. */
+ export function withViews(perms: string[]): string[] {
+   const set = new Set(perms.filter((p) => ALL_PERMS.includes(p)));
+-  set.forEach((p) => { const [m, a] = p.split('.'); if (a !== 'view') set.add(`${m}.view`); });
++  FIELDS.forEach((f) => { if (set.has(`products.${f.key}_edit`)) set.add(`products.${f.key}`); });   // edit includes view
++  set.forEach((p) => { const [m, a] = p.split('.'); if (a !== 'view' && !FIELD_PERMS.includes(p)) set.add(`${m}.view`); });
+   return ALL_PERMS.filter((p) => set.has(p));
+ }
+ 
+ export const PRESETS: Record<string, string[]> = {
+-  Cashier: ['pos.view', 'pos.edit', 'sales.view', 'returns.view', 'customers.view', 'customers.edit'],
++  Cashier: ['pos.view', 'pos.edit', 'products.stock', 'sales.view', 'returns.view', 'customers.view', 'customers.edit'],
+   Manager: ALL_PERMS.filter((p) => !p.startsWith('settings.') && !p.startsWith('accounts.edit') && p !== 'employees.edit'),
+   Accountant: ['dashboard.view', 'accounts.view', 'accounts.edit', 'expenses.view', 'expenses.edit', 'payments.view', 'payments.edit',
+     'ledgers.view', 'sales.view', 'purchases.view', 'suppliers.view', 'customers.view', 'employees.view'],
+diff --git a/src/lib/types.ts b/src/lib/types.ts
+index dda96b9..c36b78f 100644
+--- a/src/lib/types.ts
++++ b/src/lib/types.ts
+@@ -3,6 +3,7 @@ export type Kind = 'cash' | 'bank' | 'easypaisa' | 'jazzcash';
+ export interface Product {
+   id: string; barcode: string | null; name: string; category: string | null;
+   cost_price: number; sale_price: number; stock_qty: number; low_stock_alert: number;
++  supplier_id?: string | null; short_code?: string | null;
+   created_at: string; updated_at: string; deleted_at: string | null;
+ }
+ export interface Party {
+diff --git a/supabase/migration_product_fields.sql b/supabase/migration_product_fields.sql
+new file mode 100644
+index 0000000..3434344
+--- /dev/null
++++ b/supabase/migration_product_fields.sql
+@@ -0,0 +1,44 @@
++-- Horeca POS: product supplier + short code, and per-user Hidden / View only / Edit for cost price and stock on hand.
++-- Run once in the Supabase SQL editor (after the earlier SQL files).
++
++alter table products
++  add column if not exists supplier_id uuid,      -- the supplier's id in parties (no foreign key, so offline sync order never matters)
++  add column if not exists short_code text;
++create index if not exists products_short_code_idx on products (lower(short_code));
++
++-- Keep today's access for existing staff, the first time only (the guard trigger below marks that it has run):
++--   everyone keeps seeing stock; people who could add/edit products keep editing stock; people who saw and edited cost keep editing it.
++do $$ begin
++  if not exists (select 1 from pg_trigger where tgname = 'trg_products_guard_fields') then
++    update profiles set permissions = array(select distinct unnest(
++      permissions
++      || array['products.stock']
++      || case when 'products.edit' = any(permissions) then array['products.stock_edit'] else '{}'::text[] end
++      || case when 'products.cost' = any(permissions) and 'products.edit' = any(permissions) then array['products.cost_edit'] else '{}'::text[] end
++    )) where role <> 'admin';
++  end if;
++end $$;
++
++-- Server-side enforcement of "Edit". (Changes made in the SQL editor, with no signed-in user, are not blocked.)
++create or replace function guard_product_fields() returns trigger language plpgsql security definer set search_path = public as $$
++begin
++  if auth.uid() is null then return new; end if;
++  -- buying stock can update the cost price, so people who make purchases may too
++  if new.cost_price is distinct from old.cost_price and not has_any_perm(array['products.cost_edit', 'purchases.edit']) then
++    raise exception 'You do not have permission to change cost prices';
++  end if;
++  return new;
++end $$;
++drop trigger if exists trg_products_guard_fields on products;
++create trigger trg_products_guard_fields before update on products for each row execute function guard_product_fields();
++
++create or replace function guard_stock_changes() returns trigger language plpgsql security definer set search_path = public as $$
++begin
++  if auth.uid() is null then return new; end if;
++  if new.reason in ('adjustment', 'opening') and not has_any_perm(array['products.stock_edit']) then
++    raise exception 'You do not have permission to change stock';
++  end if;
++  return new;
++end $$;
++drop trigger if exists trg_stock_movements_guard on stock_movements;
++create trigger trg_stock_movements_guard before insert on stock_movements for each row execute function guard_stock_changes();

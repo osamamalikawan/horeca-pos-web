@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { callAdmin } from '@/lib/adminUsers';
-import { MODULES, PRESETS, withViews, type Profile } from '@/lib/permissions';
+import { FIELDS, FIELD_PERMS, MODULES, PRESETS, levelOf, withLevel, withViews, type FieldKey, type Level, type Profile } from '@/lib/permissions';
 import Drawer from '@/components/Drawer';
 import MigrationNotice from '@/components/MigrationNotice';
 import { useProfile } from '@/components/ProfileProvider';
@@ -41,9 +41,11 @@ export default function UsersPage() {
     if (!form) return;
     const key = `${module}.${action}`;
     let next = on ? [...form.permissions, key] : form.permissions.filter((p) => p !== key);
-    if (!on && action === 'view') next = next.filter((p) => !p.startsWith(module + '.'));   // no view, no other actions
+    if (!on && action === 'view') next = next.filter((p) => !p.startsWith(module + '.') || FIELD_PERMS.includes(p));   // no view, no other actions (field access is separate)
     setForm({ ...form, permissions: withViews(next) });
   }
+
+  const setLevel = (f: FieldKey, l: Level) => form && setForm({ ...form, permissions: withViews(withLevel(form.permissions, f, l)) });
 
   async function save() {
     if (!form) return;
@@ -172,6 +174,20 @@ export default function UsersPage() {
                   </tbody>
                 </table>
                 <div className="mute" style={{ fontSize: 13 }}>Ticking anything on a page also lets the user open that page.</div>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <span className="mute" style={{ fontSize: 13 }}>Product values</span>
+                  {FIELDS.map((f) => (
+                    <div key={f.key} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, alignItems: 'center' }}>
+                      <span>{f.label}<span className="hint" style={{ display: 'block' }}>{f.note}</span></span>
+                      <div className="seg" style={{ gridTemplateColumns: 'repeat(3, auto)' }} role="group" aria-label={f.label}>
+                        {([['hide', 'Hidden'], ['view', 'View only'], ['edit', 'Edit']] as [Level, string][]).map(([l, label]) => (
+                          <button key={l} className={levelOf(form.permissions, f.key) === l ? 'on' : ''} style={{ padding: '0 12px' }} onClick={() => setLevel(f.key, l)}>{label}</button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="mute" style={{ fontSize: 13 }}>Hidden values are not shown in the app. Editing the product page also needs “Add and edit” on Products.</div>
+                </div>
               </>
             )}
 

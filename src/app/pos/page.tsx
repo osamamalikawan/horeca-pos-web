@@ -12,6 +12,7 @@ import { customerBalances } from '@/lib/ledger';
 import PrintPortal from '@/components/PrintPortal';
 import ReceiptView, { type Receipt } from '@/components/ReceiptView';
 import { useSettings } from '@/components/SettingsProvider';
+import { fieldLevel } from '@/lib/permissions';
 import { usePosDrafts, MAX_DRAFTS, type Line, type Split } from '@/components/PosDrafts';
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -25,6 +26,7 @@ export default function PosPage() {
   const { settings } = useSettings();
   const { can, legacy, profile } = useProfile();
   const canSell = can('pos.edit'), canDiscount = can('pos.discount'), canPrice = can('pos.price');
+  const seeStock = fieldLevel(can, 'stock') !== 'hide';
   const products = useLiveQuery(() => db.products.filter((p) => !p.deleted_at).toArray(), []);
   const accounts = useLiveQuery(() => db.accounts.toArray(), []);
   const owed = useLiveQuery(() => customerBalances(), []);
@@ -74,7 +76,7 @@ export default function PosPage() {
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
     const all = (products ?? []).filter((p) => !cat || (p.category ?? '').trim() === cat).sort((a, b) => a.name.localeCompare(b.name));
-    return (s ? all.filter((p) => p.name.toLowerCase().includes(s) || (p.barcode ?? '').includes(s)) : all).slice(0, 80);
+    return (s ? all.filter((p) => p.name.toLowerCase().includes(s) || (p.barcode ?? '').includes(s) || (p.short_code ?? '').toLowerCase().includes(s)) : all).slice(0, 80);
   }, [products, q, cat]);
 
   function add(p: Product) {
@@ -88,7 +90,8 @@ export default function PosPage() {
   function submitSearch(e?: React.KeyboardEvent) {
     const s = q.trim();
     if (!s) return;
-    const exact = (products ?? []).find((p) => p.barcode === s);
+    // a barcode or a short code that matches exactly goes straight onto the invoice
+    const exact = (products ?? []).find((p) => p.barcode === s) ?? (products ?? []).find((p) => !!p.short_code && p.short_code.toLowerCase() === s.toLowerCase());
     const hit = exact ?? (list.length === 1 ? list[0] : undefined);
     if (hit) { add(hit); setQ(''); setMsg(''); if (exact && sc.beep) beep(true); e?.preventDefault(); }
     else { setMsg(`No product matches “${s}”`); if (sc.beep) beep(false); }
@@ -264,7 +267,7 @@ export default function PosPage() {
       {/* left: scan, search and products */}
       <section className="pos-left">
         <div className="pos-bar">
-          <input ref={searchRef} className="pos-search" value={q} autoFocus placeholder="Scan a barcode or search products"
+          <input ref={searchRef} className="pos-search" value={q} autoFocus placeholder="Scan a barcode, type a short code or search"
             aria-label="Scan or search" onChange={(e) => { setQ(e.target.value); setMsg(''); }} onKeyDown={onSearchKey} />
           <div className="pos-hint">{msg ? <span className="err">{msg}</span> : <span className="mute">Scan or type, then Enter. F2 returns here. Alt+N new invoice, Alt+1 to 9 switch, Alt+K jump to a page.</span>}</div>
           {categories.length > 0 && (
@@ -288,7 +291,7 @@ export default function PosPage() {
                   {n ? <span className="pbadge num">{qtyFmt(n)}</span> : null}
                   <span className="pname">{p.name}</span>
                   <span className="pprice num">{money(p.sale_price)}</span>
-                  <span className={'pstock num' + (low ? ' low' : '')}>{low ? `Out of stock (${qtyFmt(p.stock_qty)})` : `${qtyFmt(p.stock_qty)} in stock`}</span>
+                  {seeStock && <span className={'pstock num' + (low ? ' low' : '')}>{low ? `Out of stock (${qtyFmt(p.stock_qty)})` : `${qtyFmt(p.stock_qty)} in stock`}</span>}
                 </button>
               );
             })}
@@ -382,10 +385,10 @@ export default function PosPage() {
                     ? <input className="pl-disc" aria-label="Discount" placeholder="Disc. 50 or 10%" value={l.disc} onChange={(e) => patch(i, { disc: e.target.value })} />
                     : <span />}
                 </div>
-                {(l.qty > stock || (listPrice !== undefined && listPrice !== l.unit_price)) && (
+                {((seeStock && l.qty > stock) || (listPrice !== undefined && listPrice !== l.unit_price)) && (
                   <div className="pl-note num">
                     {listPrice !== undefined && listPrice !== l.unit_price && <span className="mute">list price {money(listPrice)}</span>}
-                    {l.qty > stock && <span className="warn">stock will go to {qtyFmt(stock - l.qty)}</span>}
+                    {seeStock && l.qty > stock && <span className="warn">stock will go to {qtyFmt(stock - l.qty)}</span>}
                   </div>
                 )}
               </div>

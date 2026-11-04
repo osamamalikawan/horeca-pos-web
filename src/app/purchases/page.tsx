@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, moveStock, putRow } from '@/lib/db';
 import { money, nextNo, qtyFmt, round2, uid } from '@/lib/util';
 import { cancelPurchase } from '@/lib/purchaseReturns';
+import { fieldLevel } from '@/lib/permissions';
 import { beep } from '@/lib/print';
 import { inPeriod, shortDate, type Period } from '@/lib/period';
 import type { Party, Product } from '@/lib/types';
@@ -21,6 +22,7 @@ export default function PurchasesPage() {
   const { settings } = useSettings();
   const { can } = useProfile();
   const canEdit = can('purchases.edit'), canCancel = can('purchases.cancel');
+  const costLevel = fieldLevel(can, 'cost'), seeCost = costLevel !== 'hide', seeStock = fieldLevel(can, 'stock') !== 'hide';
   const data = useLiveQuery(async () => {
     const [purchases, parties, products, accounts] = await Promise.all([
       db.purchases.filter((p) => !p.deleted_at).toArray(),
@@ -91,7 +93,7 @@ export default function PurchasesPage() {
   const productMatches = useMemo(() => {
     const s = pq.trim().toLowerCase();
     if (!s) return [];
-    return (data?.products ?? []).filter((p) => p.name.toLowerCase().includes(s) || (p.barcode ?? '').includes(s))
+    return (data?.products ?? []).filter((p) => p.name.toLowerCase().includes(s) || (p.barcode ?? '').includes(s) || (p.short_code ?? '').toLowerCase().includes(s))
       .sort((a, b) => a.name.localeCompare(b.name)).slice(0, 8);
   }, [data, pq]);
   const supMatches = useMemo(() => {
@@ -104,7 +106,7 @@ export default function PurchasesPage() {
     setLines((ls) => {
       const i = ls.findIndex((l) => l.product_id === p.id);
       if (i >= 0) return ls.map((l, j) => (j === i ? { ...l, qty: Math.round((l.qty + 1) * 1000) / 1000 } : l));
-      return [...ls, { product_id: p.id, name: p.name, qty: 1, cost: Number(p.cost_price) }];
+      return [...ls, { product_id: p.id, name: p.name, qty: 1, cost: seeCost ? Number(p.cost_price) : 0 }];   // a hidden cost price is not pre-filled
     });
     setPq(''); setMsg(''); searchRef.current?.focus();
   }
@@ -112,7 +114,7 @@ export default function PurchasesPage() {
     if (e.key !== 'Enter') return;
     const s = pq.trim();
     if (!s) return;
-    const exact = (data?.products ?? []).find((p) => p.barcode === s);
+    const exact = (data?.products ?? []).find((p) => p.barcode === s) ?? (data?.products ?? []).find((p) => !!p.short_code && p.short_code.toLowerCase() === s.toLowerCase());
     const hit = exact ?? (productMatches.length === 1 ? productMatches[0] : undefined);
     if (hit) { addProduct(hit); if (exact && settings.scanner.beep) beep(true); }
     else { setMsg('No product matches. Add it on the Products page first.'); if (settings.scanner.beep) beep(false); }
@@ -155,7 +157,7 @@ export default function PurchasesPage() {
             line_total: round2(l.qty * l.cost),
           });
           await moveStock(l.product_id, l.qty, 'purchase', id);
-          if (updateCost) {
+          if (updateCost && costLevel === 'edit') {
             const cur = await db.products.get(l.product_id);
             if (cur && Number(cur.cost_price) !== l.cost) await putRow('products', { ...cur, cost_price: l.cost });
           }
@@ -258,13 +260,13 @@ export default function PurchasesPage() {
         </div>
 
         <div style={{ display: 'grid', gap: 6 }}>
-          <input ref={searchRef} value={pq} placeholder="Scan a barcode or search products to add" onChange={(e) => { setPq(e.target.value); setMsg(''); }} onKeyDown={onSearchKey} />
+          <input ref={searchRef} value={pq} placeholder="Scan a barcode, type a short code or search products to add" onChange={(e) => { setPq(e.target.value); setMsg(''); }} onKeyDown={onSearchKey} />
           {msg && <div className="err">{msg}</div>}
           {productMatches.length > 0 && (
             <div className="pick">
               {productMatches.map((p) => (
                 <button key={p.id} onClick={() => addProduct(p)}>
-                  <span>{p.name}</span><span className="mute num">stock {qtyFmt(p.stock_qty)}, cost {money(p.cost_price)}</span>
+                  <span>{p.name}</span><span className="mute num">{[seeStock ? `stock ${qtyFmt(p.stock_qty)}` : '', seeCost ? `cost ${money(p.cost_price)}` : ''].filter(Boolean).join(', ')}</span>
                 </button>
               ))}
             </div>
@@ -273,12 +275,12 @@ export default function PurchasesPage() {
 
         {lines.length === 0 ? <div className="empty">Search or scan the products you are restocking.</div> : (
           <table className="plain">
-            <thead><tr><th>Product</th><th className="right">In stock</th><th className="right">Qty</th><th className="right">Cost price</th><th className="right">Total</th><th /></tr></thead>
+            <thead><tr><th>Product</th>{seeStock && <th className="right">In stock</th>}<th className="right">Qty</th><th className="right">Cost price</th><th className="right">Total</th><th /></tr></thead>
             <tbody>
               {lines.map((l, i) => (
                 <tr key={l.product_id}>
                   <td>{l.name}</td>
-                  <td className="right num mute">{qtyFmt(byId.get(l.product_id)?.stock_qty ?? 0)}</td>
+                  {seeStock && <td className="right num mute">{qtyFmt(byId.get(l.product_id)?.stock_qty ?? 0)}</td>}
                   <td className="right"><NumInput className="num" label="Quantity" live decimals={3} value={l.qty} onCommit={(n) => patch(i, { qty: n })} /></td>
                   <td className="right"><NumInput className="num" label="Cost price" clearOnFocus value={l.cost} onCommit={(n) => patch(i, { cost: n })} /></td>
                   <td className="right num">{money(l.qty * l.cost)}</td>
@@ -289,7 +291,7 @@ export default function PurchasesPage() {
           </table>
         )}
 
-        <label className="check"><input type="checkbox" checked={updateCost} onChange={(e) => setUpdateCost(e.target.checked)} />Update each product’s cost price to the price on this purchase</label>
+        {costLevel === 'edit' && <label className="check"><input type="checkbox" checked={updateCost} onChange={(e) => setUpdateCost(e.target.checked)} />Update each product’s cost price to the price on this purchase</label>}
 
         <div className="summary">
           <div className="rl2"><span className="mute">Total products</span><span className="num">{lines.length}</span></div>
