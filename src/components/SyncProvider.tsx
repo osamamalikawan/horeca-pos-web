@@ -57,6 +57,15 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
       }
       // Step 2: the data (sales, products, ...). If this fails the subscription result above still stands.
       const r = await syncNow();
+      if (r.failed.length) {
+        // Everything else went through; these changes were refused by the server and stay queued (see Waiting to upload).
+        const m = `${r.failed.length} change(s) could not upload. First problem, ${r.failed[0].table}: ${r.failed[0].message}`;
+        setError(m); setStatus('error');
+        setBaseline((b) => Math.max(b ?? 0, Date.now()));        // the server answered, so the device is in contact
+        try { localStorage.setItem(SYNC_ERR_KEY, `${new Date().toLocaleString()}: ${m}`); } catch { /* ignore */ }
+        refreshProfile();
+        return;
+      }
       const t = new Date(r.at).getTime();
       setLastSync(r.at); setBaseline(t); setStatus('idle');
       localStorage.setItem(SEEN_KEY, String(t));
