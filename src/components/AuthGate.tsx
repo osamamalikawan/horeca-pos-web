@@ -1,7 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { LOCK_KEY, readLock } from '@/lib/subscription';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '@/lib/db';
+import { downloadUnsyncedBackup } from '@/lib/backup';
+import { LOCK_KEY, readLock, readSyncError } from '@/lib/subscription';
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<'loading' | 'out' | 'in'>('loading');
@@ -10,12 +13,14 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [syncErr, setSyncErr] = useState('');
+  const waiting = useLiveQuery(() => db.outbox.count(), []) ?? 0;
 
   useEffect(() => {
     if (!supabase) { setState('out'); return; }
     const apply = (signedIn: boolean) => {
       if (signedIn) { localStorage.removeItem(LOCK_KEY); setNotice(''); }
-      else setNotice(readLock());
+      else { setNotice(readLock()); setSyncErr(readSyncError()); }
       setState(signedIn ? 'in' : 'out');
     };
     supabase.auth.getSession().then(({ data }) => apply(!!data.session));
@@ -48,6 +53,12 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       <form onSubmit={signIn}>
         <h1>Sign in to Horeca POS</h1>
         {notice && <div className="notice">{notice}</div>}
+        {syncErr && <div className="mute" style={{ fontSize: 12 }}>Last sync problem on this device: {syncErr}</div>}
+        {waiting > 0 && (
+          <div className="mute" style={{ fontSize: 13 }}>
+            {waiting} change(s) on this device are waiting to upload. <a href="#" onClick={(e) => { e.preventDefault(); downloadUnsyncedBackup(); }}>Save a copy to a file</a>
+          </div>
+        )}
         <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus /></label>
         <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
         {error && <div className="err">{error}</div>}

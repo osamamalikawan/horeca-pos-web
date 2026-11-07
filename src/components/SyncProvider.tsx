@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { syncNow } from '@/lib/sync';
-import { checkSubscription, lockDevice, SEEN_KEY, SUB_CHECKED_KEY, SYNC_LIMIT_MS } from '@/lib/subscription';
+import { checkSubscription, lockDevice, SEEN_KEY, SUB_CHECKED_KEY, SYNC_ERR_KEY, SYNC_LIMIT_MS } from '@/lib/subscription';
 import { useProfile } from './ProfileProvider';
 import { SYNC_AFTER_CHANGE_MS, SYNC_INTERVAL_MS } from '@/lib/syncTiming';
 
@@ -49,15 +49,25 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
         try { await syncNow(); } catch { /* the device is locked either way */ }
         lockDevice(sub.reason); setStatus('idle'); return;
       }
-      if (sub.reached) { try { setSubChecked(localStorage.getItem(SUB_CHECKED_KEY)); } catch { /* ignore */ } }
+      if (sub.reached) {
+        // The 3-day rule exists so a paused or ended subscription is noticed. Reaching the server and reading it as
+        // active satisfies that, even if the data sync below fails, so a sync problem alone never signs the device out.
+        try { setSubChecked(localStorage.getItem(SUB_CHECKED_KEY)); } catch { /* ignore */ }
+        setBaseline((b) => Math.max(b ?? 0, Date.now()));
+      }
       // Step 2: the data (sales, products, ...). If this fails the subscription result above still stands.
       const r = await syncNow();
       const t = new Date(r.at).getTime();
       setLastSync(r.at); setBaseline(t); setStatus('idle');
       localStorage.setItem(SEEN_KEY, String(t));
       refreshProfile();
+      try { localStorage.removeItem(SYNC_ERR_KEY); } catch { /* ignore */ }
     } catch (e: any) {
-      setError(e?.message ?? String(e)); setStatus('error');
+      const msg = e?.message ?? String(e);
+      setError(msg); setStatus('error');
+      // The server answered with an error (not a network failure): the device is in contact, so a sync problem alone must not sign it out.
+      if (!/failed to fetch|networkerror|network request failed|fetch failed|offline|timed? ?out/i.test(msg)) setBaseline((b) => Math.max(b ?? 0, Date.now()));
+      try { localStorage.setItem(SYNC_ERR_KEY, `${new Date().toLocaleString()}: ${e?.message ?? String(e)}`); } catch { /* ignore */ }
     } finally {
       busy.current = false; setReady(true);
       if (syncAgain.current) {                    // upload what was added during this sync
@@ -87,7 +97,10 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
       let first = (await db.meta.get('firstSeen'))?.value as string | undefined;
       if (!ls && !first) { first = new Date().toISOString(); await db.meta.put({ key: 'firstSeen', value: first }); }
       if (ls) setLastSync(ls);
-      setBaseline(new Date((ls ?? first)!).getTime());
+      let subAt = 0;
+      try { const v = localStorage.getItem(SUB_CHECKED_KEY); subAt = v ? new Date(v).getTime() : 0; } catch { /* ignore */ }
+      const start = Math.max(new Date((ls ?? first)!).getTime(), subAt);   // last data sync or last subscription check, whichever is newer
+      setBaseline((b) => Math.max(b ?? 0, start));
     })();
     setOnline(navigator.onLine);
     try { setSubChecked(localStorage.getItem(SUB_CHECKED_KEY)); } catch { /* ignore */ }

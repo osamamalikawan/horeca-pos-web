@@ -5,6 +5,8 @@ export const LOCK_KEY = 'horeca-lock';
 export const SEEN_KEY = 'horeca-last-seen';          // latest clock reading, to spot a clock set back
 export const SUB_CHECKED_KEY = 'horeca-sub-checked'; // last time the subscription switch was actually read
 
+export const SYNC_ERR_KEY = 'horeca-sync-error';       // why the last data sync failed (kept so it can be read on the sign-in screen)
+
 export type LockReason = 'sync' | 'clock' | 'paused' | 'stopped' | 'expired' | 'disabled';
 
 export const LOCK_MESSAGES: Record<LockReason, string> = {
@@ -15,6 +17,10 @@ export const LOCK_MESSAGES: Record<LockReason, string> = {
   expired: 'Your subscription has expired. Contact support to renew it.',
   disabled: 'Your account has been disabled. Contact the administrator.',
 };
+
+export function readSyncError(): string {
+  try { return localStorage.getItem(SYNC_ERR_KEY) ?? ''; } catch { return ''; }
+}
 
 export function readLock(): string {
   try { const r = localStorage.getItem(LOCK_KEY) as LockReason | null; return r ? LOCK_MESSAGES[r] ?? '' : ''; } catch { return ''; }

@@ -1,0 +1,166 @@
+diff --git a/src/components/AuthGate.tsx b/src/components/AuthGate.tsx
+index 245fcff..5b402da 100644
+--- a/src/components/AuthGate.tsx
++++ b/src/components/AuthGate.tsx
+@@ -1,7 +1,10 @@
+ 'use client';
+ import { useEffect, useState } from 'react';
+ import { supabase } from '@/lib/supabase';
+-import { LOCK_KEY, readLock } from '@/lib/subscription';
++import { useLiveQuery } from 'dexie-react-hooks';
++import { db } from '@/lib/db';
++import { downloadUnsyncedBackup } from '@/lib/backup';
++import { LOCK_KEY, readLock, readSyncError } from '@/lib/subscription';
+ 
+ export default function AuthGate({ children }: { children: React.ReactNode }) {
+   const [state, setState] = useState<'loading' | 'out' | 'in'>('loading');
+@@ -10,12 +13,14 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
+   const [error, setError] = useState('');
+   const [busy, setBusy] = useState(false);
+   const [notice, setNotice] = useState('');
++  const [syncErr, setSyncErr] = useState('');
++  const waiting = useLiveQuery(() => db.outbox.count(), []) ?? 0;
+ 
+   useEffect(() => {
+     if (!supabase) { setState('out'); return; }
+     const apply = (signedIn: boolean) => {
+       if (signedIn) { localStorage.removeItem(LOCK_KEY); setNotice(''); }
+-      else setNotice(readLock());
++      else { setNotice(readLock()); setSyncErr(readSyncError()); }
+       setState(signedIn ? 'in' : 'out');
+     };
+     supabase.auth.getSession().then(({ data }) => apply(!!data.session));
+@@ -48,6 +53,12 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
+       <form onSubmit={signIn}>
+         <h1>Sign in to Horeca POS</h1>
+         {notice && <div className="notice">{notice}</div>}
++        {syncErr && <div className="mute" style={{ fontSize: 12 }}>Last sync problem on this device: {syncErr}</div>}
++        {waiting > 0 && (
++          <div className="mute" style={{ fontSize: 13 }}>
++            {waiting} change(s) on this device are waiting to upload. <a href="#" onClick={(e) => { e.preventDefault(); downloadUnsyncedBackup(); }}>Save a copy to a file</a>
++          </div>
++        )}
+         <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus /></label>
+         <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
+         {error && <div className="err">{error}</div>}
+diff --git a/src/components/SyncPopover.tsx b/src/components/SyncPopover.tsx
+index 0312a0f..e43276c 100644
+--- a/src/components/SyncPopover.tsx
++++ b/src/components/SyncPopover.tsx
+@@ -1,4 +1,5 @@
+ 'use client';
++import { downloadUnsyncedBackup } from '@/lib/backup';
+ import { useEffect, useRef, useState } from 'react';
+ import { useLiveQuery } from 'dexie-react-hooks';
+ import { db } from '@/lib/db';
+@@ -66,7 +67,9 @@ export default function SyncPopover() {
+             <dt>Subscription checked</dt>
+             <dd className="num">{subChecked ? ago(subChecked, now) : 'Not yet'}</dd>
+             <dt>Waiting to upload</dt>
+-            <dd className="num">{waiting.sales} sale(s){otherChanges > 0 ? `, ${otherChanges} other changes` : ''}</dd>
++            <dd className="num">{waiting.sales} sale(s){otherChanges > 0 ? `, ${otherChanges} other changes` : ''}
++              {waiting.all > 0 && <div><a href="#" onClick={(e) => { e.preventDefault(); downloadUnsyncedBackup(); }}>Save a copy</a></div>}
++            </dd>
+             <dt>Sync needed within</dt>
+             <dd className={'num ' + (hoursLeft !== null && hoursLeft <= 12 ? 'warn' : '')}>{hoursLeft === null ? '' : `${hoursLeft} h`}</dd>
+           </dl>
+diff --git a/src/components/SyncProvider.tsx b/src/components/SyncProvider.tsx
+index c7fbe5a..a8b4cee 100644
+--- a/src/components/SyncProvider.tsx
++++ b/src/components/SyncProvider.tsx
+@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
+ import { useLiveQuery } from 'dexie-react-hooks';
+ import { db } from '@/lib/db';
+ import { syncNow } from '@/lib/sync';
+-import { checkSubscription, lockDevice, SEEN_KEY, SUB_CHECKED_KEY, SYNC_LIMIT_MS } from '@/lib/subscription';
++import { checkSubscription, lockDevice, SEEN_KEY, SUB_CHECKED_KEY, SYNC_ERR_KEY, SYNC_LIMIT_MS } from '@/lib/subscription';
+ import { useProfile } from './ProfileProvider';
+ import { SYNC_AFTER_CHANGE_MS, SYNC_INTERVAL_MS } from '@/lib/syncTiming';
+ 
+@@ -49,15 +49,25 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
+         try { await syncNow(); } catch { /* the device is locked either way */ }
+         lockDevice(sub.reason); setStatus('idle'); return;
+       }
+-      if (sub.reached) { try { setSubChecked(localStorage.getItem(SUB_CHECKED_KEY)); } catch { /* ignore */ } }
++      if (sub.reached) {
++        // The 3-day rule exists so a paused or ended subscription is noticed. Reaching the server and reading it as
++        // active satisfies that, even if the data sync below fails, so a sync problem alone never signs the device out.
++        try { setSubChecked(localStorage.getItem(SUB_CHECKED_KEY)); } catch { /* ignore */ }
++        setBaseline((b) => Math.max(b ?? 0, Date.now()));
++      }
+       // Step 2: the data (sales, products, ...). If this fails the subscription result above still stands.
+       const r = await syncNow();
+       const t = new Date(r.at).getTime();
+       setLastSync(r.at); setBaseline(t); setStatus('idle');
+       localStorage.setItem(SEEN_KEY, String(t));
+       refreshProfile();
++      try { localStorage.removeItem(SYNC_ERR_KEY); } catch { /* ignore */ }
+     } catch (e: any) {
+-      setError(e?.message ?? String(e)); setStatus('error');
++      const msg = e?.message ?? String(e);
++      setError(msg); setStatus('error');
++      // The server answered with an error (not a network failure): the device is in contact, so a sync problem alone must not sign it out.
++      if (!/failed to fetch|networkerror|network request failed|fetch failed|offline|timed? ?out/i.test(msg)) setBaseline((b) => Math.max(b ?? 0, Date.now()));
++      try { localStorage.setItem(SYNC_ERR_KEY, `${new Date().toLocaleString()}: ${e?.message ?? String(e)}`); } catch { /* ignore */ }
+     } finally {
+       busy.current = false; setReady(true);
+       if (syncAgain.current) {                    // upload what was added during this sync
+@@ -87,7 +97,10 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
+       let first = (await db.meta.get('firstSeen'))?.value as string | undefined;
+       if (!ls && !first) { first = new Date().toISOString(); await db.meta.put({ key: 'firstSeen', value: first }); }
+       if (ls) setLastSync(ls);
+-      setBaseline(new Date((ls ?? first)!).getTime());
++      let subAt = 0;
++      try { const v = localStorage.getItem(SUB_CHECKED_KEY); subAt = v ? new Date(v).getTime() : 0; } catch { /* ignore */ }
++      const start = Math.max(new Date((ls ?? first)!).getTime(), subAt);   // last data sync or last subscription check, whichever is newer
++      setBaseline((b) => Math.max(b ?? 0, start));
+     })();
+     setOnline(navigator.onLine);
+     try { setSubChecked(localStorage.getItem(SUB_CHECKED_KEY)); } catch { /* ignore */ }
+diff --git a/src/lib/backup.ts b/src/lib/backup.ts
+new file mode 100644
+index 0000000..887998e
+--- /dev/null
++++ b/src/lib/backup.ts
+@@ -0,0 +1,17 @@
++import { db } from './db';
++
++/**
++ * Saves everything still waiting to upload (sales, stock movements, payments ...) to a JSON file.
++ * It reads only the local database, so it works while signed out and offline.
++ */
++export async function downloadUnsyncedBackup(): Promise<number> {
++  const rows = await db.outbox.toArray();
++  const blob = new Blob([JSON.stringify({ app: 'horeca-pos', saved_at: new Date().toISOString(), waiting: rows }, null, 2)], { type: 'application/json' });
++  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
++  const a = document.createElement('a');
++  a.href = URL.createObjectURL(blob);
++  a.download = `horeca-unsynced-${stamp}.json`;
++  document.body.appendChild(a); a.click(); a.remove();
++  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
++  return rows.length;
++}
+diff --git a/src/lib/subscription.ts b/src/lib/subscription.ts
+index 74d6ae2..8453abe 100644
+--- a/src/lib/subscription.ts
++++ b/src/lib/subscription.ts
+@@ -5,6 +5,8 @@ export const LOCK_KEY = 'horeca-lock';
+ export const SEEN_KEY = 'horeca-last-seen';          // latest clock reading, to spot a clock set back
+ export const SUB_CHECKED_KEY = 'horeca-sub-checked'; // last time the subscription switch was actually read
+ 
++export const SYNC_ERR_KEY = 'horeca-sync-error';       // why the last data sync failed (kept so it can be read on the sign-in screen)
++
+ export type LockReason = 'sync' | 'clock' | 'paused' | 'stopped' | 'expired' | 'disabled';
+ 
+ export const LOCK_MESSAGES: Record<LockReason, string> = {
+@@ -16,6 +18,10 @@ export const LOCK_MESSAGES: Record<LockReason, string> = {
+   disabled: 'Your account has been disabled. Contact the administrator.',
+ };
+ 
++export function readSyncError(): string {
++  try { return localStorage.getItem(SYNC_ERR_KEY) ?? ''; } catch { return ''; }
++}
++
+ export function readLock(): string {
+   try { const r = localStorage.getItem(LOCK_KEY) as LockReason | null; return r ? LOCK_MESSAGES[r] ?? '' : ''; } catch { return ''; }
+ }

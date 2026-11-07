@@ -1,4 +1,5 @@
 'use client';
+import { downloadUnsyncedBackup } from '@/lib/backup';
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
@@ -66,7 +67,9 @@ export default function SyncPopover() {
             <dt>Subscription checked</dt>
             <dd className="num">{subChecked ? ago(subChecked, now) : 'Not yet'}</dd>
             <dt>Waiting to upload</dt>
-            <dd className="num">{waiting.sales} sale(s){otherChanges > 0 ? `, ${otherChanges} other changes` : ''}</dd>
+            <dd className="num">{waiting.sales} sale(s){otherChanges > 0 ? `, ${otherChanges} other changes` : ''}
+              {waiting.all > 0 && <div><a href="#" onClick={(e) => { e.preventDefault(); downloadUnsyncedBackup(); }}>Save a copy</a></div>}
+            </dd>
             <dt>Sync needed within</dt>
             <dd className={'num ' + (hoursLeft !== null && hoursLeft <= 12 ? 'warn' : '')}>{hoursLeft === null ? '' : `${hoursLeft} h`}</dd>
           </dl>
